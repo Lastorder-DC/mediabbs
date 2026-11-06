@@ -8,12 +8,27 @@ pub struct CustomError {
 
 impl error::ResponseError for CustomError {
     fn error_response(&self) -> HttpResponse {
+        let body = if self.is_wiki_auth_error() {
+            "TokenInvalid"
+        } else {
+            "INTERNAL SERVER ERROR"
+        };
         HttpResponseBuilder::new(self.status_code())
             .set_header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-            .body("INTERNAL SERVER ERROR")
+            .body(body)
     }
     fn status_code(&self) -> StatusCode {
-        StatusCode::INTERNAL_SERVER_ERROR
+        if self.is_wiki_auth_error() {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+impl CustomError {
+    fn is_wiki_auth_error(&self) -> bool {
+        self.err.downcast_ref::<crate::mediawiki::WikiAuthError>().is_some()
     }
 }
 
@@ -36,5 +51,19 @@ impl From<actix_web::error::BlockingError<anyhow::Error>> for CustomError {
 impl From<anyhow::Error> for CustomError {
     fn from(err: anyhow::Error) -> CustomError {
         CustomError { err }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::ResponseError;
+
+    #[test]
+    fn test_status_codes() {
+        let e: CustomError = anyhow::Error::from(crate::mediawiki::WikiAuthError).into();
+        assert_eq!(e.status_code(), StatusCode::UNAUTHORIZED);
+        let e: CustomError = anyhow::anyhow!("boom").into();
+        assert_eq!(e.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

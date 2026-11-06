@@ -11,7 +11,7 @@ async fn get_me(
     if let Some(token) = token {
         let profile = mw.profile(&token).await?;
         Ok(HttpResponse::Ok()
-            .set_header("Cache-Control", "private, max-age=86400")
+            .set_header("Cache-Control", "private, max-age=60")
             .set_header("Vary", "Cookie")
             .json(profile))
     } else {

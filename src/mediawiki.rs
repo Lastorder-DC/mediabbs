@@ -14,6 +14,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// The wiki rejected the access token (revoked, expired on the wiki side, ...).
+/// Turned into `401 TokenInvalid` by [`crate::custom_error::CustomError`].
+#[derive(Debug, derive_more::Display, derive_more::Error)]
+#[display(fmt = "the wiki rejected the access token")]
+pub struct WikiAuthError;
+
 const SITEINFO_TTL: Duration = Duration::from_secs(60 * 60);
 const SITEINFO_RETRY: Duration = Duration::from_secs(60);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -301,6 +307,9 @@ impl MwClient {
             .send()
             .await
             .map_err(|e| anyhow!("profile request failed: {}", e))?;
+        if res.status() == StatusCode::UNAUTHORIZED || res.status() == StatusCode::FORBIDDEN {
+            return Err(WikiAuthError.into());
+        }
         if !res.status().is_success() {
             return Err(anyhow!("profile request returned {}", res.status()));
         }
