@@ -116,6 +116,7 @@ impl FromRequest for RefreshToken {
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Profile {
     pub id: i32,
     pub username: String,
@@ -132,19 +133,33 @@ impl Profile {
     }
 }
 
+/// Response of MediaWiki `rest.php/oauth2/resource/profile`.
+///
+/// `realname` and `email` are only returned when the OAuth consumer was granted
+/// access to private information, and some fields may be missing depending on the
+/// Extension:OAuth version, so everything except `sub`/`username` is optional.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct MwProfileResponse {
     sub: i32,
     username: String,
-    editcount: i32,
+    #[serde(default)]
+    editcount: Option<i32>,
+    #[serde(default)]
     confirmed_email: bool,
+    #[serde(default)]
     blocked: bool,
-    registered: String,
+    #[serde(default)]
+    registered: Option<String>,
+    #[serde(default)]
     groups: Vec<String>,
+    #[serde(default)]
     rights: Vec<String>,
+    #[serde(default)]
     grants: Vec<String>,
-    realname: String,
-    email: String,
+    #[serde(default)]
+    realname: Option<String>,
+    #[serde(default)]
+    email: Option<String>,
 }
 
 impl Profile {
@@ -168,9 +183,42 @@ impl Profile {
             blocked: data.blocked,
             groups: data.groups,
             rights: data.rights,
-            email: data.email,
+            // Kept as a string (empty when not granted) for client compatibility.
+            email: data.email.unwrap_or_default(),
         };
 
         Ok(resp)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_profile_without_private_info() {
+        let body = r#"{"sub":3,"username":"Foo","editcount":10,"confirmed_email":false,
+            "blocked":false,"registered":"20210101000000","groups":["*","user"],
+            "rights":["read"],"grants":["mwoauth-authonly"]}"#;
+        let data: MwProfileResponse = serde_json::from_str(body).expect("must parse");
+        assert_eq!(data.email, None);
+        assert_eq!(data.realname, None);
+        assert_eq!(data.groups, vec!["*", "user"]);
+    }
+
+    #[test]
+    fn test_profile_serializes_camel_case() {
+        let profile = Profile {
+            id: 1,
+            username: "Foo".to_owned(),
+            confirmed_email: true,
+            blocked: false,
+            groups: vec![],
+            rights: vec![],
+            email: String::new(),
+        };
+        let json = serde_json::to_value(&profile).unwrap();
+        assert_eq!(json["confirmedEmail"], true);
+        assert!(json.get("confirmed_email").is_none());
     }
 }

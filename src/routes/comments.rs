@@ -17,6 +17,7 @@ use diesel::{Connection, MysqlConnection};
 use validator::Validate;
 
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct GetCommentQuery {
     show_hidden: Option<bool>,
 }
@@ -47,6 +48,7 @@ async fn get_comment(
 }
 
 #[derive(Deserialize, Validate, Debug)]
+#[serde(rename_all = "camelCase")]
 struct PutCommentStatusRequest {
     is_hidden: Option<bool>,
 }

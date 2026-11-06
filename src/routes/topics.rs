@@ -41,6 +41,7 @@ async fn get_topic(
 }
 
 #[derive(Deserialize, Validate, Debug)]
+#[serde(rename_all = "camelCase")]
 struct PutTopicStatusRequest {
     is_closed: Option<bool>,
     is_suspended: Option<bool>,
@@ -227,6 +228,7 @@ async fn get_topic_comments(
 }
 
 #[derive(Deserialize, Validate, Debug)]
+#[serde(rename_all = "camelCase")]
 struct PostTopicRequest {
     board_id: i32,
     #[validate(length(min = 1, max = 100))]
@@ -330,6 +332,7 @@ async fn post_topic(
 }
 
 #[derive(Deserialize, Validate, Debug)]
+#[serde(rename_all = "camelCase")]
 struct PostCommentRequest {
     #[validate(length(min = 1, max = 100000))]
     content: String,

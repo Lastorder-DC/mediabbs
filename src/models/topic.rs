@@ -44,6 +44,7 @@ impl TopicForm {
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash)]
+#[serde(rename_all = "camelCase")]
 pub struct TopicPublic {
     pub id: i32,
     pub board_id: i32,

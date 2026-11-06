@@ -44,6 +44,7 @@ struct NewComment<'a> {
 }
 
 #[derive(Serialize, Deserialize, Hash, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct CommentPublic {
     pub id: i32,
     pub topic_id: i32,

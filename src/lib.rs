@@ -22,8 +22,13 @@ pub async fn run() -> std::io::Result<()> {
     dotenv().ok();
     env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
+    // Sentry is optional: SENTRY_DSN (or legacy SENTRY_URL). Unset/empty disables it.
+    let sentry_dsn = env::var("SENTRY_DSN")
+        .or_else(|_| env::var("SENTRY_URL"))
+        .ok()
+        .filter(|dsn| !dsn.trim().is_empty());
     let _guard = sentry::init((
-        env::var("SENTRY_URL").expect("SENTRY_URL is not set"),
+        sentry_dsn,
         sentry::ClientOptions {
             auto_session_tracking: true,
             session_mode: sentry::SessionMode::Request,

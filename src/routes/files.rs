@@ -6,6 +6,7 @@ use std::path::Path;
 use validator::Validate;
 
 #[derive(Deserialize, Validate, Debug)]
+#[serde(rename_all = "camelCase")]
 struct PostFileRequest {
     filename: String,
     content: String,
