@@ -19,6 +19,51 @@ impl Board {
         let results = boards::table.load::<Self>(conn)?;
         Ok(results)
     }
+    pub fn find_by_name(conn: &MysqlConnection, name: &str) -> Result<Self> {
+        let board = boards::table
+            .filter(boards::name.eq(name))
+            .first::<Self>(conn)?;
+        Ok(board)
+    }
+    pub fn create(conn: &MysqlConnection, name: &str, display_name: &str) -> Result<()> {
+        diesel::insert_into(boards::table)
+            .values((boards::name.eq(name), boards::display_name.eq(display_name)))
+            .execute(conn)?;
+        Ok(())
+    }
+    pub fn set_display_name(
+        conn: &MysqlConnection,
+        name: &str,
+        display_name: &str,
+    ) -> Result<usize> {
+        let n = diesel::update(boards::table.filter(boards::name.eq(name)))
+            .set(boards::display_name.eq(display_name))
+            .execute(conn)?;
+        Ok(n)
+    }
+    pub fn set_active(conn: &MysqlConnection, name: &str, is_active: bool) -> Result<usize> {
+        let n = diesel::update(boards::table.filter(boards::name.eq(name)))
+            .set(boards::is_active.eq(is_active))
+            .execute(conn)?;
+        Ok(n)
+    }
+    /// Board names appear in client URLs (`/<name>/<topic id>`): lower-case ASCII
+    /// letters, digits, `-` and `_`, not starting with a digit or symbol, and not a
+    /// reserved client route.
+    pub fn is_valid_name(name: &str) -> bool {
+        const RESERVED: &[&str] = &["auth", "admin", "api", "uploads", "config"];
+        let first_ok = name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_lowercase())
+            .unwrap_or(false);
+        first_ok
+            && name.len() <= 64
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+            && !RESERVED.contains(&name)
+    }
     pub fn find_by_id(conn: &MysqlConnection, id: i32) -> Result<Self> {
         let post = boards::table.find(id).first::<Self>(conn)?;
         Ok(post)
@@ -64,4 +109,22 @@ pub struct BoardPublic {
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_valid_name() {
+        assert!(Board::is_valid_name("wiki"));
+        assert!(Board::is_valid_name("dev_issue"));
+        assert!(Board::is_valid_name("free-board2"));
+        assert!(!Board::is_valid_name(""));
+        assert!(!Board::is_valid_name("Wiki"));
+        assert!(!Board::is_valid_name("2board"));
+        assert!(!Board::is_valid_name("위키방"));
+        assert!(!Board::is_valid_name("a/b"));
+        assert!(!Board::is_valid_name("auth"));
+    }
 }

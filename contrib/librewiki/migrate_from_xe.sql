@@ -1,3 +1,8 @@
+-- One-off migration of librewiki's old XpressEngine board (database `oldbbs`)
+-- into librebbs (database `librebbs`). Kept for reference only; adjust the
+-- database names and module_srl mapping before reusing it for another site.
+-- Requires contrib/librewiki/seed_boards.sql (board ids 1-5) to be applied first.
+--
 -- 129 == 위키방 (1)
 -- 131 == 익명방 (3)
 -- 131207 == 조합 (4)

@@ -10,4 +10,5 @@ CREATE TABLE boards (
     INDEX (updated_at)
 );
 
-INSERT INTO boards (display_name, name) VALUES ('위키방', 'wiki');
+-- Boards are created with `mediabbs board add` (librewiki's initial boards
+-- moved to contrib/librewiki/seed_boards.sql).

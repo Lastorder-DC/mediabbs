@@ -1,4 +1,15 @@
 use diesel::prelude::*;
+embed_migrations!("migrations");
+
+/// Applies pending migrations embedded in the binary.
+pub fn run_migrations(conn: &MysqlConnection, verbose: bool) -> anyhow::Result<()> {
+    if verbose {
+        embedded_migrations::run_with_output(conn, &mut std::io::stdout())?;
+    } else {
+        embedded_migrations::run(conn)?;
+    }
+    Ok(())
+}
 use diesel::r2d2::ConnectionManager;
 
 pub type DbPool = r2d2::Pool<ConnectionManager<MysqlConnection>>;

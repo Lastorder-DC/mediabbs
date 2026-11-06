@@ -11,6 +11,8 @@ use std::env;
 pub struct Config {
     pub bind_address: String,
     pub database_url: String,
+    /// Apply pending migrations when the server starts.
+    pub migrate_on_start: bool,
     /// Empty means "allow any origin" (not recommended in production).
     pub cors_allowed_origins: Vec<String>,
     pub trust_proxy: TrustProxy,
@@ -174,6 +176,7 @@ impl Config {
         let bind_address = get_any(&["BIND_ADDRESS", "HOST"])
             .ok_or("BIND_ADDRESS is not set (e.g. 127.0.0.1:8080)")?;
         let database_url = required("DATABASE_URL")?;
+        let migrate_on_start = bool_or("MIGRATE_ON_START", false)?;
         let cors_allowed_origins = get_any(&["CORS_ALLOWED_ORIGINS", "CORS"])
             .map(|v| split_list(&v, &[',', '|']))
             .unwrap_or_default();
@@ -395,6 +398,7 @@ impl Config {
         Ok(Config {
             bind_address,
             database_url,
+            migrate_on_start,
             cors_allowed_origins,
             trust_proxy,
             sentry_dsn,

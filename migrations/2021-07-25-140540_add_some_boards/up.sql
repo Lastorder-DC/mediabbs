@@ -1,4 +1,4 @@
-INSERT INTO boards (display_name, name) VALUES ('자유게시판', 'freeboard');
-INSERT INTO boards (display_name, name) VALUES ('익명게시판', 'anon');
-INSERT INTO boards (display_name, name) VALUES ('조합게시판', 'coop');
-INSERT INTO boards (display_name, name) VALUES ('이슈트래커', 'dev_issue');
+-- Intentionally empty: this migration used to insert librewiki's boards.
+-- They moved to contrib/librewiki/seed_boards.sql. The migration is kept so
+-- that existing databases keep a consistent migration history.
+DO 0;

@@ -2,7 +2,10 @@
 extern crate serde_derive;
 #[macro_use]
 extern crate diesel;
+#[macro_use]
+extern crate diesel_migrations;
 pub mod auth;
+pub mod cli;
 pub mod config;
 pub mod connection_info;
 pub mod custom_error;
@@ -28,7 +31,7 @@ fn exit_with_config_error(message: String) -> ! {
 pub async fn run() -> std::io::Result<()> {
     dotenv().ok();
     if env::var_os("RUST_LOG").is_none() {
-        env::set_var("RUST_LOG", "actix_web=info,librebbs=info");
+        env::set_var("RUST_LOG", "actix_web=info,mediabbs=info");
     }
     env_logger::init();
 
@@ -54,6 +57,10 @@ pub async fn run() -> std::io::Result<()> {
     ));
     env::set_var("RUST_BACKTRACE", "1");
     let pool = db::create_connection_pool(&config.database_url);
+    if config.migrate_on_start {
+        let conn = pool.get().expect("cannot get a database connection");
+        db::run_migrations(&conn, true).expect("failed to run migrations");
+    }
 
     if config.cors_allowed_origins.is_empty() {
         log::warn!("CORS_ALLOWED_ORIGINS is not set: any origin may send credentialed requests");

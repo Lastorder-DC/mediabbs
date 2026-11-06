@@ -252,6 +252,7 @@ async fn post_topic(
     #[derive(Debug, Display)]
     enum ErrorKind {
         BoardNotFound,
+        BoardIsInactive,
         OtherError(anyhow::Error),
     }
 
@@ -271,6 +272,9 @@ async fn post_topic(
     let conn = pool.get()?;
     let res = block::<_, Topic, ErrorKind>(move || {
         let board = Board::find_by_id(&conn, board_id).map_err(|_| ErrorKind::BoardNotFound)?;
+        if !board.is_active {
+            return Err(ErrorKind::BoardIsInactive);
+        }
         let topic = conn
             .transaction::<Topic, _, _>(|| match profile {
                 Some(Profile { id, username, .. }) => {
@@ -294,6 +298,9 @@ async fn post_topic(
         Ok(topic) => Ok(HttpResponse::Ok().json(topic.get_public())),
         Err(BlockingError::Error(ErrorKind::BoardNotFound)) => {
             Ok(HttpResponse::NotFound().body("Board is not found"))
+        }
+        Err(BlockingError::Error(ErrorKind::BoardIsInactive)) => {
+            Ok(HttpResponse::Forbidden().body("Board is not active"))
         }
         Err(BlockingError::Error(ErrorKind::OtherError(e))) => Err(e.into()),
         Err(BlockingError::Canceled) => Err(BlockingError::Canceled.into()),
@@ -322,6 +329,7 @@ async fn post_topic_comments(
         TopicIsHidden,
         TopicIsSuspended,
         TopicIsClosed,
+        BoardIsInactive,
         OtherError(anyhow::Error),
     }
 
@@ -347,6 +355,11 @@ async fn post_topic_comments(
             return Err(ErrorKind::TopicIsClosed);
         } else if topic.is_suspended {
             return Err(ErrorKind::TopicIsSuspended);
+        }
+        match Board::find_by_id(&conn, topic.board_id) {
+            Ok(board) if !board.is_active => return Err(ErrorKind::BoardIsInactive),
+            Ok(_) => {}
+            Err(e) => return Err(ErrorKind::OtherError(e)),
         }
         match profile {
             Some(Profile { id, username, .. }) => {
@@ -374,6 +387,9 @@ async fn post_topic_comments(
         }
         Err(BlockingError::Error(ErrorKind::TopicIsSuspended)) => {
             Ok(HttpResponse::Forbidden().body("Topic is suspended"))
+        }
+        Err(BlockingError::Error(ErrorKind::BoardIsInactive)) => {
+            Ok(HttpResponse::Forbidden().body("Board is not active"))
         }
         Err(BlockingError::Error(ErrorKind::OtherError(e))) => Err(e.into()),
         Err(BlockingError::Canceled) => Err(BlockingError::Canceled.into()),
