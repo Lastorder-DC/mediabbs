@@ -1,11 +1,15 @@
-use crate::auth::{Profile, UserInfo};
+use crate::auth::UserInfo;
 use crate::custom_error::CustomError;
-use actix_web::{get, web, HttpResponse, Scope};
+use crate::mediawiki::MwClient;
+use actix_web::{get, web, web::Data, HttpResponse, Scope};
 
 #[get("")]
-async fn get_me(UserInfo { token, .. }: UserInfo) -> Result<HttpResponse, CustomError> {
+async fn get_me(
+    mw: Data<MwClient>,
+    UserInfo { token, .. }: UserInfo,
+) -> Result<HttpResponse, CustomError> {
     if let Some(token) = token {
-        let profile = Profile::get(&token).await?;
+        let profile = mw.profile(&token).await?;
         Ok(HttpResponse::Ok()
             .set_header("Cache-Control", "private, max-age=86400")
             .set_header("Vary", "Cookie")

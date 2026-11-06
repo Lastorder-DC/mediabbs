@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::custom_error::CustomError;
 use crate::db::DbPool;
 use crate::models::{Board, BoardPublic, TopicPublic};
@@ -10,7 +11,7 @@ use actix_web::{
 use derive_more::Display;
 
 #[get("")]
-async fn get_boards(pool: Data<DbPool>) -> Result<HttpResponse, CustomError> {
+async fn get_boards(pool: Data<DbPool>, config: Data<Config>) -> Result<HttpResponse, CustomError> {
     let conn = pool.get()?;
     let boards = block(move || Board::get_all(&conn)).await?;
     let boards = boards
@@ -19,7 +20,10 @@ async fn get_boards(pool: Data<DbPool>) -> Result<HttpResponse, CustomError> {
         .collect::<Vec<BoardPublic>>();
 
     Ok(HttpResponse::Ok()
-        .set_header("Cache-Control", "max-age=86400")
+        .set_header(
+            "Cache-Control",
+            format!("max-age={}", config.site.boards_cache_seconds),
+        )
         .json(boards))
 }
 

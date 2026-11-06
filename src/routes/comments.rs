@@ -1,9 +1,10 @@
 use std::net::IpAddr;
 
-use crate::auth::{Profile, UserInfo};
+use crate::auth::UserInfo;
 use crate::connection_info::ConnectionInfo;
 use crate::custom_error::CustomError;
 use crate::db::DbPool;
+use crate::mediawiki::MwClient;
 use crate::models::{Comment, CommentForm, Log, LogContent, LogType};
 use actix_web::error::BlockingError;
 use actix_web::{
@@ -25,6 +26,7 @@ struct GetCommentQuery {
 #[get("{comment_id}")]
 async fn get_comment(
     pool: Data<DbPool>,
+    mw: Data<MwClient>,
     UserInfo { token, .. }: UserInfo,
     Path((comment_id,)): Path<(i32,)>,
     query: Query<GetCommentQuery>,
@@ -32,7 +34,7 @@ async fn get_comment(
     let show_hidden = query.show_hidden.unwrap_or(false);
     if show_hidden {
         let profile = match token {
-            Some(token) => Profile::get(&token).await?,
+            Some(token) => mw.profile(&token).await?,
             None => return Ok(HttpResponse::Unauthorized().body("TokenMissing")),
         };
         if !profile.is_admin() {
@@ -86,6 +88,7 @@ fn log_put_comment_status(
 #[put("{comment_id}/status")]
 async fn put_comment_status(
     pool: Data<DbPool>,
+    mw: Data<MwClient>,
     UserInfo { token, .. }: UserInfo,
     Path((comment_id,)): Path<(i32,)>,
     Json(req_status): Json<PutCommentStatusRequest>,
@@ -103,7 +106,7 @@ async fn put_comment_status(
     }
 
     let profile = match token {
-        Some(token) => Profile::get(&token).await?,
+        Some(token) => mw.profile(&token).await?,
         None => return Ok(HttpResponse::Unauthorized().body("TokenMissing")),
     };
 

@@ -1,15 +1,18 @@
+//! Authentication: verifies MediaWiki OAuth 2.0 access tokens (JWT, RS256) stored
+//! in the `access_token` cookie.
+
+use crate::config::Config;
 use actix_web::{
-    client::Client, dev, error::ErrorUnauthorized, web::Bytes, Error, FromRequest, HttpMessage,
-    HttpRequest,
+    dev,
+    error::{ErrorInternalServerError, ErrorUnauthorized},
+    web::Data,
+    Error, FromRequest, HttpMessage, HttpRequest,
 };
-use anyhow::anyhow;
 use chrono::prelude::*;
 use derive_more::{Display, Error};
 use futures::future::{err, ok, Ready};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
-use lazy_static::lazy_static;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::env;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
@@ -21,6 +24,7 @@ struct Claims {
     #[serde(deserialize_with = "from_float")]
     exp: DateTime<Utc>,
     sub: String,
+    #[serde(default)]
     scopes: Vec<String>,
 }
 
@@ -34,28 +38,61 @@ where
     Ok(dt)
 }
 
-#[derive(Debug, Display, Error)]
+/// Extracts the numeric user id from a JWT `sub` claim.
+///
+/// Accepts plain ids (`"123"`) as well as prefixed forms some Extension:OAuth
+/// versions/configurations may produce (e.g. `"mw:CentralAuth::123"`).
+pub fn parse_user_id(sub: &str) -> Option<i32> {
+    let sub = sub.trim();
+    sub.parse::<i32>()
+        .ok()
+        .or_else(|| sub.rsplit(':').next()?.parse::<i32>().ok())
+        .filter(|id| *id > 0)
+}
+
+#[derive(Debug, Display, Error, PartialEq)]
 enum DecodeError {
     TokenExpired,
     TokenInvalid,
 }
 
-lazy_static! {
-    static ref PUBLIC_KEY: Vec<u8> = std::fs::read("pubkey.pem").expect("public key must exist");
-    static ref DECODING_KEY: DecodingKey<'static> =
-        DecodingKey::from_rsa_pem(&PUBLIC_KEY).expect("must succeed");
+/// Verifies access tokens with the wiki's OAuth 2.0 public key
+/// (`$wgOAuth2PublicKey`). Created once at startup and shared as app data.
+pub struct JwtVerifier {
+    key: DecodingKey<'static>,
+    audience: String,
 }
 
-fn decode(token: &str) -> Result<Claims, DecodeError> {
-    let mut validation = Validation::new(Algorithm::RS256);
-    validation.validate_exp = false;
-    validation.set_audience(&[env::var("OAUTH_CLIENT_ID").expect("OAUTH_CLIENT_ID must be set")]);
-    let token_data = jsonwebtoken::decode::<Claims>(&token, &DECODING_KEY, &validation)
-        .map_err(|_| DecodeError::TokenInvalid)?;
-    if token_data.claims.exp < Utc::now() {
-        Err(DecodeError::TokenExpired)
-    } else {
-        Ok(token_data.claims)
+impl JwtVerifier {
+    pub fn new(config: &Config) -> Result<Self, String> {
+        let path = &config.oauth.public_key_path;
+        let pem = std::fs::read(path)
+            .map_err(|e| format!("cannot read OAUTH_PUBLIC_KEY_PATH ({}): {}", path, e))?;
+        Self::from_pem(&pem, &config.oauth.client_id)
+            .map_err(|e| format!("invalid public key in {}: {}", path, e))
+    }
+
+    pub fn from_pem(pem: &[u8], audience: &str) -> Result<Self, String> {
+        let key = DecodingKey::from_rsa_pem(pem)
+            .map_err(|e| e.to_string())?
+            .into_static();
+        Ok(JwtVerifier {
+            key,
+            audience: audience.to_owned(),
+        })
+    }
+
+    fn decode(&self, token: &str) -> Result<Claims, DecodeError> {
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.validate_exp = false;
+        validation.set_audience(&[&self.audience]);
+        let token_data = jsonwebtoken::decode::<Claims>(token, &self.key, &validation)
+            .map_err(|_| DecodeError::TokenInvalid)?;
+        if token_data.claims.exp < Utc::now() {
+            Err(DecodeError::TokenExpired)
+        } else {
+            Ok(token_data.claims)
+        }
     }
 }
 
@@ -71,26 +108,30 @@ impl FromRequest for UserInfo {
     type Config = ();
 
     fn from_request(req: &HttpRequest, _payload: &mut dev::Payload) -> Self::Future {
-        if let Some(token_cookie) = req.cookie("access_token") {
-            let token = token_cookie.value();
-            match decode(&token) {
-                Ok(decoded) => match decoded.sub.parse::<i32>() {
-                    Ok(id) => ok(Self {
-                        id: Some(id),
-                        token: Some(token.to_owned()),
-                    }),
-                    Err(_) => err(ErrorUnauthorized("TokenExpired")),
-                },
-                Err(e) => match e {
-                    DecodeError::TokenExpired => err(ErrorUnauthorized("TokenExpired")),
-                    DecodeError::TokenInvalid => err(ErrorUnauthorized("TokenInvalid")),
-                },
+        let token_cookie = match req.cookie("access_token") {
+            Some(cookie) => cookie,
+            None => {
+                return ok(Self {
+                    id: None,
+                    token: None,
+                })
             }
-        } else {
-            ok(Self {
-                id: None,
-                token: None,
-            })
+        };
+        let verifier = match req.app_data::<Data<JwtVerifier>>() {
+            Some(v) => v,
+            None => return err(ErrorInternalServerError("JwtVerifier is not configured")),
+        };
+        let token = token_cookie.value();
+        match verifier.decode(token) {
+            Ok(decoded) => match parse_user_id(&decoded.sub) {
+                Some(id) => ok(Self {
+                    id: Some(id),
+                    token: Some(token.to_owned()),
+                }),
+                None => err(ErrorUnauthorized("TokenInvalid")),
+            },
+            Err(DecodeError::TokenExpired) => err(ErrorUnauthorized("TokenExpired")),
+            Err(DecodeError::TokenInvalid) => err(ErrorUnauthorized("TokenInvalid")),
         }
     }
 }
@@ -115,6 +156,7 @@ impl FromRequest for RefreshToken {
     }
 }
 
+/// A MediaWiki user, as returned by `GET /me`.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
@@ -124,70 +166,15 @@ pub struct Profile {
     pub blocked: bool,
     pub groups: Vec<String>,
     pub rights: Vec<String>,
+    /// Empty when the OAuth consumer has no access to private information.
     pub email: String,
+    /// Whether the user may moderate the board (`ADMIN_GROUPS` / `ADMIN_RIGHTS`).
+    pub is_admin: bool,
 }
 
 impl Profile {
     pub fn is_admin(&self) -> bool {
-        self.groups.contains(&"boardmanager".to_owned())
-    }
-}
-
-/// Response of MediaWiki `rest.php/oauth2/resource/profile`.
-///
-/// `realname` and `email` are only returned when the OAuth consumer was granted
-/// access to private information, and some fields may be missing depending on the
-/// Extension:OAuth version, so everything except `sub`/`username` is optional.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct MwProfileResponse {
-    sub: i32,
-    username: String,
-    #[serde(default)]
-    editcount: Option<i32>,
-    #[serde(default)]
-    confirmed_email: bool,
-    #[serde(default)]
-    blocked: bool,
-    #[serde(default)]
-    registered: Option<String>,
-    #[serde(default)]
-    groups: Vec<String>,
-    #[serde(default)]
-    rights: Vec<String>,
-    #[serde(default)]
-    grants: Vec<String>,
-    #[serde(default)]
-    realname: Option<String>,
-    #[serde(default)]
-    email: Option<String>,
-}
-
-impl Profile {
-    pub async fn get(token: &str) -> anyhow::Result<Self> {
-        let client = Client::default();
-        let mut res = client
-            .get("https://librewiki.net/rest.php/oauth2/resource/profile")
-            .set_header("Accept", "application/json")
-            .set_header("Authorization", format!("Bearer {}", token))
-            .send()
-            .await
-            .map_err(|e| anyhow!(format!("{}", e)))?;
-
-        // MW gives incorrect content-type header
-        let body: Bytes = res.body().await?;
-        let data: MwProfileResponse = serde_json::from_slice(&body)?;
-        let resp = Profile {
-            id: data.sub,
-            username: data.username,
-            confirmed_email: data.confirmed_email,
-            blocked: data.blocked,
-            groups: data.groups,
-            rights: data.rights,
-            // Kept as a string (empty when not granted) for client compatibility.
-            email: data.email.unwrap_or_default(),
-        };
-
-        Ok(resp)
+        self.is_admin
     }
 }
 
@@ -196,14 +183,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_profile_without_private_info() {
-        let body = r#"{"sub":3,"username":"Foo","editcount":10,"confirmed_email":false,
-            "blocked":false,"registered":"20210101000000","groups":["*","user"],
-            "rights":["read"],"grants":["mwoauth-authonly"]}"#;
-        let data: MwProfileResponse = serde_json::from_str(body).expect("must parse");
-        assert_eq!(data.email, None);
-        assert_eq!(data.realname, None);
-        assert_eq!(data.groups, vec!["*", "user"]);
+    fn test_parse_user_id() {
+        assert_eq!(parse_user_id("123"), Some(123));
+        assert_eq!(parse_user_id(" 42 "), Some(42));
+        assert_eq!(parse_user_id("mw:CentralAuth::7"), Some(7));
+        assert_eq!(parse_user_id("mw:local:wikidb:15"), Some(15));
+        assert_eq!(parse_user_id("0"), None);
+        assert_eq!(parse_user_id(""), None);
+        assert_eq!(parse_user_id("abc"), None);
     }
 
     #[test]
@@ -216,9 +203,58 @@ mod tests {
             groups: vec![],
             rights: vec![],
             email: String::new(),
+            is_admin: true,
         };
         let json = serde_json::to_value(&profile).unwrap();
         assert_eq!(json["confirmedEmail"], true);
+        assert_eq!(json["isAdmin"], true);
         assert!(json.get("confirmed_email").is_none());
+    }
+
+    fn make_token(aud: &str, sub: &str, exp_offset_secs: i64) -> String {
+        use jsonwebtoken::{encode, EncodingKey, Header};
+        let now = Utc::now().timestamp() as f64;
+        let claims = serde_json::json!({
+            "aud": aud,
+            "jti": "x",
+            "iat": now,
+            "nbf": now,
+            "exp": now + exp_offset_secs as f64,
+            "sub": sub,
+            "scopes": ["basic"],
+        });
+        let key = EncodingKey::from_rsa_pem(include_bytes!("testdata/test_private.pem")).unwrap();
+        encode(&Header::new(Algorithm::RS256), &claims, &key).unwrap()
+    }
+
+    fn verifier() -> JwtVerifier {
+        JwtVerifier::from_pem(include_bytes!("testdata/test_public.pem"), "client-id").unwrap()
+    }
+
+    #[test]
+    fn test_decode_valid() {
+        let claims = verifier()
+            .decode(&make_token("client-id", "42", 3600))
+            .unwrap();
+        assert_eq!(parse_user_id(&claims.sub), Some(42));
+    }
+
+    #[test]
+    fn test_decode_expired() {
+        let res = verifier().decode(&make_token("client-id", "42", -3600));
+        assert_eq!(res.unwrap_err(), DecodeError::TokenExpired);
+    }
+
+    #[test]
+    fn test_decode_wrong_audience_or_garbage() {
+        let res = verifier().decode(&make_token("other-client", "42", 3600));
+        assert_eq!(res.unwrap_err(), DecodeError::TokenInvalid);
+        let res = verifier().decode("not.a.jwt");
+        assert_eq!(res.unwrap_err(), DecodeError::TokenInvalid);
+    }
+
+    #[test]
+    fn test_invalid_pem() {
+        assert!(JwtVerifier::from_pem(b"not a key", "aud").is_err());
     }
 }

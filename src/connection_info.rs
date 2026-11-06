@@ -2,7 +2,7 @@
 //!
 //! Forwarding headers (`Forwarded`, `X-Forwarded-For`) are only honoured when the
 //! request comes through a trusted proxy, configured with the `TRUST_PROXY`
-//! environment variable:
+//! setting (see `config.rs`):
 //!
 //! * unset            : trust loopback only (`127.0.0.0/8`, `::1/128`)
 //! * `false` / `none` : never trust forwarding headers; use the socket peer address
@@ -13,16 +13,16 @@
 //! The client address is found by walking the forwarding chain from the nearest hop
 //! (the socket peer) towards the origin and stopping at the first untrusted address.
 
+use crate::config::Config;
 use actix_web::{
     dev,
     error::ErrorBadRequest,
     http::{HeaderMap, HeaderValue},
+    web::Data,
     Error, FromRequest, HttpRequest,
 };
 use futures::future::{err, ok, Ready};
-use lazy_static::lazy_static;
 use std::{
-    env,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     str::FromStr,
 };
@@ -32,7 +32,7 @@ pub struct ConnectionInfo {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct Cidr {
+pub struct Cidr {
     addr: IpAddr,
     prefix: u8,
 }
@@ -86,34 +86,34 @@ fn prefix_match(a: &[u8], b: &[u8], prefix: u8) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum TrustProxy {
+pub enum TrustProxy {
     None,
     All,
     List(Vec<Cidr>),
 }
 
 impl TrustProxy {
-    fn parse(value: Option<&str>) -> Self {
+    pub fn parse(value: Option<&str>) -> Result<Self, String> {
         let value = match value.map(str::trim) {
-            None | Some("") => return Self::default_loopback(),
+            None | Some("") => return Ok(Self::default_loopback()),
             Some(v) => v,
         };
         match value.to_ascii_lowercase().as_str() {
-            "false" | "none" | "0" | "no" => return TrustProxy::None,
-            "true" | "*" | "all" | "1" | "yes" => return TrustProxy::All,
+            "false" | "none" | "0" | "no" => return Ok(TrustProxy::None),
+            "true" | "*" | "all" | "1" | "yes" => return Ok(TrustProxy::All),
             _ => {}
         }
         let mut list = Vec::new();
         for item in value.split(',').filter(|x| !x.trim().is_empty()) {
             match Cidr::parse(item) {
                 Some(cidr) => list.push(cidr),
-                None => panic!("TRUST_PROXY contains an invalid address/CIDR: {}", item),
+                None => return Err(format!("invalid address/CIDR: {}", item.trim())),
             }
         }
-        TrustProxy::List(list)
+        Ok(TrustProxy::List(list))
     }
 
-    fn default_loopback() -> Self {
+    pub fn default_loopback() -> Self {
         TrustProxy::List(vec![
             Cidr::parse("127.0.0.0/8").unwrap(),
             Cidr::parse("::1/128").unwrap(),
@@ -127,10 +127,6 @@ impl TrustProxy {
             TrustProxy::List(list) => list.iter().any(|c| c.contains(ip)),
         }
     }
-}
-
-lazy_static! {
-    static ref TRUST_PROXY: TrustProxy = TrustProxy::parse(env::var("TRUST_PROXY").ok().as_deref());
 }
 
 /// Converts IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) to plain IPv4.
@@ -245,9 +241,11 @@ impl FromRequest for ConnectionInfo {
         match req.peer_addr() {
             Some(peer) => {
                 let chain = forwarded_chain(req.headers());
-                ok(ConnectionInfo {
-                    ip: resolve_client_ip(peer.ip(), &chain, &TRUST_PROXY),
-                })
+                let ip = match req.app_data::<Data<Config>>() {
+                    Some(config) => resolve_client_ip(peer.ip(), &chain, &config.trust_proxy),
+                    None => resolve_client_ip(peer.ip(), &chain, &TrustProxy::default_loopback()),
+                };
+                ok(ConnectionInfo { ip })
             }
             None => err(ErrorBadRequest("No IP address")),
         }
@@ -306,11 +304,18 @@ mod tests {
 
     #[test]
     fn test_trust_proxy_parse() {
-        assert_eq!(TrustProxy::parse(None), TrustProxy::default_loopback());
-        assert_eq!(TrustProxy::parse(Some("")), TrustProxy::default_loopback());
-        assert_eq!(TrustProxy::parse(Some("false")), TrustProxy::None);
-        assert_eq!(TrustProxy::parse(Some("TRUE")), TrustProxy::All);
-        match TrustProxy::parse(Some("10.0.0.0/8, ::1")) {
+        assert_eq!(
+            TrustProxy::parse(None).unwrap(),
+            TrustProxy::default_loopback()
+        );
+        assert_eq!(
+            TrustProxy::parse(Some("")).unwrap(),
+            TrustProxy::default_loopback()
+        );
+        assert_eq!(TrustProxy::parse(Some("false")).unwrap(), TrustProxy::None);
+        assert_eq!(TrustProxy::parse(Some("TRUE")).unwrap(), TrustProxy::All);
+        assert!(TrustProxy::parse(Some("10.0.0.0/8,bogus")).is_err());
+        match TrustProxy::parse(Some("10.0.0.0/8, ::1")).unwrap() {
             TrustProxy::List(l) => assert_eq!(l.len(), 2),
             _ => panic!(),
         }
@@ -372,7 +377,7 @@ mod tests {
             ip("127.0.0.1")
         );
         // Loopback proxy appends client; client spoofed a leading entry, which is ignored
-        let trust = TrustProxy::parse(Some("127.0.0.1,10.0.0.0/8"));
+        let trust = TrustProxy::parse(Some("127.0.0.1,10.0.0.0/8")).unwrap();
         assert_eq!(
             resolve_client_ip(ip("127.0.0.1"), &chain, &trust),
             ip("1.1.1.1")

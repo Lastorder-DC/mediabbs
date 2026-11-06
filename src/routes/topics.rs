@@ -4,10 +4,10 @@ use crate::auth::{Profile, UserInfo};
 use crate::connection_info::ConnectionInfo;
 use crate::custom_error::CustomError;
 use crate::db::DbPool;
+use crate::mediawiki::MwClient;
 use crate::models::{
     Board, Comment, CommentPublic, Log, LogContent, LogType, PublicEntity, Topic, TopicForm,
 };
-use actix_web::client::Client;
 use actix_web::{
     error::BlockingError,
     get, post, put, web,
@@ -15,7 +15,6 @@ use actix_web::{
     HttpRequest, HttpResponse, Scope,
 };
 use actix_web_validator::Json;
-use anyhow::{anyhow, Result};
 use derive_more::Display;
 use diesel::{Connection, MysqlConnection};
 use validator::Validate;
@@ -106,6 +105,7 @@ fn log_put_topic_status(
 #[put("{topic_id}/status")]
 async fn put_topic_status(
     pool: Data<DbPool>,
+    mw: Data<MwClient>,
     UserInfo { token, .. }: UserInfo,
     Path((topic_id,)): Path<(i32,)>,
     Json(req_status): Json<PutTopicStatusRequest>,
@@ -123,7 +123,7 @@ async fn put_topic_status(
     }
 
     let profile = match token {
-        Some(token) => Profile::get(&token).await?,
+        Some(token) => mw.profile(&token).await?,
         None => return Ok(HttpResponse::Unauthorized().body("TokenMissing")),
     };
 
@@ -237,38 +237,6 @@ struct PostTopicRequest {
     content: String,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct MwBlocksResponse {
-    query: MwBlocksResponseQuery,
-}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct MwBlocksResponseQuery {
-    blocks: Vec<MwBlocksResponseEntity>,
-}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct MwBlocksResponseEntity {
-    id: i64,
-}
-
-async fn is_blocked_ip(ip: &IpAddr) -> Result<bool> {
-    let client = Client::default();
-    let mut res = client
-        .get(format!(
-            "https://librewiki.net/api.php?action=query&list=blocks&bkip={}&format=json",
-            ip
-        ))
-        .set_header("Accept", "application/json")
-        .send()
-        .await
-        .map_err(|e| anyhow!(format!("{}", e)))?;
-
-    let data: MwBlocksResponse = res.json().await?;
-
-    Ok(data.query.blocks.len() > 0)
-}
-
 #[post("")]
 async fn post_topic(
     ConnectionInfo { ip }: ConnectionInfo,
@@ -279,6 +247,7 @@ async fn post_topic(
     }): Json<PostTopicRequest>,
     UserInfo { token, .. }: UserInfo,
     pool: Data<DbPool>,
+    mw: Data<MwClient>,
 ) -> Result<HttpResponse, CustomError> {
     #[derive(Debug, Display)]
     enum ErrorKind {
@@ -287,7 +256,7 @@ async fn post_topic(
     }
 
     let profile = match token {
-        Some(token) => Some(Profile::get(&token).await?),
+        Some(token) => Some(mw.profile(&token).await?),
         None => None,
     };
 
@@ -295,7 +264,7 @@ async fn post_topic(
         if profile.blocked {
             return Ok(HttpResponse::Forbidden().body("You are blocked"));
         }
-    } else if is_blocked_ip(&ip).await? {
+    } else if mw.is_ip_blocked(&ip).await? {
         return Ok(HttpResponse::Forbidden().body("You are blocked"));
     }
 
@@ -345,6 +314,7 @@ async fn post_topic_comments(
     Path((topic_id,)): Path<(i32,)>,
     UserInfo { token, .. }: UserInfo,
     pool: Data<DbPool>,
+    mw: Data<MwClient>,
 ) -> Result<HttpResponse, CustomError> {
     #[derive(Debug, Display)]
     enum ErrorKind {
@@ -356,7 +326,7 @@ async fn post_topic_comments(
     }
 
     let profile = match token {
-        Some(token) => Some(Profile::get(&token).await?),
+        Some(token) => Some(mw.profile(&token).await?),
         None => None,
     };
 
@@ -364,7 +334,7 @@ async fn post_topic_comments(
         if profile.blocked {
             return Ok(HttpResponse::Forbidden().body("You are blocked"));
         }
-    } else if is_blocked_ip(&ip).await? {
+    } else if mw.is_ip_blocked(&ip).await? {
         return Ok(HttpResponse::Forbidden().body("You are blocked"));
     }
 
