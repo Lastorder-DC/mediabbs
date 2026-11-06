@@ -154,12 +154,8 @@ impl Config {
     where
         F: Fn(&str) -> Option<String>,
     {
-        // Treat empty values as unset.
-        let get = |key: &str| {
-            get(key)
-                .map(|v| v.trim().to_owned())
-                .filter(|v| !v.is_empty())
-        };
+        // Treat empty values as unset; strip one layer of surrounding quotes.
+        let get = |key: &str| get(key).map(|v| unquote(&v)).filter(|v| !v.is_empty());
         let required = |key: &str| get(key).ok_or_else(|| format!("{} is not set", key));
         let get_any = |keys: &[&str]| keys.iter().find_map(|k| get(k));
         let bool_or = |key: &str, default: bool| -> Result<bool, String> {
@@ -412,6 +408,24 @@ impl Config {
     }
 }
 
+/// Trims whitespace and one pair of matching surrounding quotes.
+///
+/// `.env` files are parsed shell-style (quotes removed, `$VAR` expanded), while
+/// `docker run --env-file` keeps values verbatim. Stripping quotes here lets the
+/// same file work in both: values containing `"` or `$` (JSON, `/wiki/$1`) can
+/// be written as `KEY='value'`.
+fn unquote(v: &str) -> String {
+    let v = v.trim();
+    let bytes = v.as_bytes();
+    if bytes.len() >= 2 {
+        let (first, last) = (bytes[0], bytes[bytes.len() - 1]);
+        if first == last && (first == b'\'' || first == b'"') {
+            return v[1..v.len() - 1].to_owned();
+        }
+    }
+    v.to_owned()
+}
+
 fn parse_bool(v: &str) -> Option<bool> {
     match v.to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Some(true),
@@ -620,6 +634,26 @@ mod tests {
         assert!(config(&[("S3_ENDPOINT", "https://m.example")]).is_err());
         assert!(config(&[("S3_BUCKET", "")]).is_err());
         assert!(config(&[("STORAGE_BACKEND", "ftp")]).is_err());
+    }
+
+    #[test]
+    fn test_unquote() {
+        assert_eq!(unquote("  abc "), "abc");
+        assert_eq!(unquote("'/wiki/$1'"), "/wiki/$1");
+        assert_eq!(unquote("\"x\""), "x");
+        assert_eq!(unquote("'mismatched\""), "'mismatched\"");
+        assert_eq!(unquote("'"), "'");
+        // As passed verbatim by `docker run --env-file`
+        let c = config(&[
+            ("NAV_LINKS", r#"'[{"label":"a","url":"https://x"}]'"#),
+            ("MW_ARTICLE_PATH", "'/wiki/$1'"),
+        ])
+        .unwrap();
+        assert_eq!(c.site.nav_links[0]["label"], "a");
+        assert_eq!(
+            c.mw.article_path.as_deref(),
+            Some("https://wiki.example.org/wiki/$1")
+        );
     }
 
     #[test]

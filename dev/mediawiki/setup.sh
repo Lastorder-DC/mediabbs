@@ -42,8 +42,8 @@ $wgEnableUploads = false;
 $wgEmailAuthentication = false;
 
 wfLoadExtension( 'OAuth' );
-$wgOAuth2PrivateKey = file_get_contents( '/var/www/data/oauth2.key' );
-$wgOAuth2PublicKey = file_get_contents( '/var/www/data/oauth2.pub' );
+$wgOAuth2PrivateKey = '/var/www/data/oauth2.key';
+$wgOAuth2PublicKey = '/var/www/data/oauth2.pub';
 # Plain HTTP is fine for local testing only.
 $wgMWOAuthSecureTokenTransfer = false;
 # Short-lived access tokens make the refresh flow easy to exercise.
