@@ -10,8 +10,8 @@ pub mod db;
 pub mod mediawiki;
 pub mod models;
 pub mod routes;
-pub mod s3;
 pub mod schema;
+pub mod storage;
 use actix_cors::Cors;
 use actix_web::{
     middleware::{DefaultHeaders, Logger},
@@ -37,6 +37,9 @@ pub async fn run() -> std::io::Result<()> {
         auth::JwtVerifier::new(&config).unwrap_or_else(|e| exit_with_config_error(e)),
     );
     let mw = web::Data::new(mediawiki::MwClient::new(config.clone()));
+    let storage = web::Data::new(
+        storage::Storage::new(config.clone()).unwrap_or_else(|e| exit_with_config_error(e)),
+    );
     let config_data = web::Data::from(config.clone());
 
     // Sentry is optional: SENTRY_DSN (or legacy SENTRY_URL). Unset/empty disables it.
@@ -83,9 +86,10 @@ pub async fn run() -> std::io::Result<()> {
             .app_data(config_data.clone())
             .app_data(jwt.clone())
             .app_data(mw.clone())
+            .app_data(storage.clone())
             .app_data(actix_web_validator::JsonConfig::default().limit(1024 * 1024 * 1))
-            .service(web::scope("/v1").service(routes::scope()))
-            .service(routes::scope())
+            .service(web::scope("/v1").service(routes::scope(&config)))
+            .service(routes::scope(&config))
     })
     .bind(bind_address)?
     .run()

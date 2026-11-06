@@ -17,6 +17,16 @@ struct PublicConfig<'a> {
     nav_links: &'a serde_json::Value,
     recent_changes: PublicRecentChanges,
     site_notice: PublicSiteNotice<'a>,
+    upload: PublicUpload<'a>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct PublicUpload<'a> {
+    enabled: bool,
+    require_login: bool,
+    max_bytes: usize,
+    allowed_extensions: &'a [String],
 }
 
 #[derive(Serialize, Debug)]
@@ -92,6 +102,12 @@ async fn get_config(config: Data<Config>, mw: Data<MwClient>) -> HttpResponse {
             enabled: site.sitenotice_enabled,
             page: &site.sitenotice_page,
         },
+        upload: PublicUpload {
+            enabled: config.upload.enabled,
+            require_login: config.upload.require_login,
+            max_bytes: config.upload.max_bytes,
+            allowed_extensions: &config.upload.allowed_extensions,
+        },
     };
     // Don't let browsers cache a degraded response for long.
     let max_age = if siteinfo.is_some() { 300 } else { 30 };
@@ -132,6 +148,7 @@ mod tests {
                 "MW_SCRIPT_PATH" => Some(script.clone()),
                 "OAUTH_CLIENT_ID" => Some("test-client".into()),
                 "OAUTH_CLIENT_SECRET" => Some("unused".into()),
+                "UPLOAD_ENABLED" => Some("false".into()),
                 _ => None,
             })
             .unwrap(),
@@ -150,6 +167,7 @@ mod tests {
         assert!(body["siteName"].is_string(), "siteinfo should be reachable");
         assert!(body["wiki"]["articlePath"].as_str().unwrap().contains("$1"));
         assert_eq!(body["oauth"]["clientId"], "test-client");
+        assert_eq!(body["upload"]["enabled"], false);
 
         let blocked = mw
             .is_ip_blocked(&"127.0.0.1".parse().unwrap())

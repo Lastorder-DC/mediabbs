@@ -20,6 +20,7 @@ pub struct Config {
     pub admin: AdminConfig,
     pub cookie: CookieConfig,
     pub site: SiteConfig,
+    pub upload: UploadConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +92,35 @@ pub struct CookieConfig {
     pub secure: bool,
     pub same_site: SameSite,
     pub max_age_days: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct UploadConfig {
+    pub enabled: bool,
+    pub require_login: bool,
+    /// Maximum decoded file size in bytes.
+    pub max_bytes: usize,
+    /// Lower-case extensions without dot.
+    pub allowed_extensions: Vec<String>,
+    /// URL prefix for stored files, ending with `/` (empty when uploads are disabled).
+    pub public_url: String,
+    pub storage: StorageConfig,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StorageConfig {
+    Disabled,
+    S3 {
+        region: String,
+        /// S3-compatible endpoint (MinIO, R2, ...). `None` = AWS.
+        endpoint: Option<String>,
+        bucket: String,
+        /// Prepended to object keys, e.g. `bbs/`.
+        key_prefix: String,
+    },
+    Local {
+        dir: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -234,6 +264,92 @@ impl Config {
             max_age_days,
         };
 
+        // --- uploads ---
+        let upload_enabled = bool_or("UPLOAD_ENABLED", true)?;
+        let storage = if !upload_enabled {
+            StorageConfig::Disabled
+        } else {
+            match get("STORAGE_BACKEND")
+                .map(|v| v.to_ascii_lowercase())
+                .as_deref()
+            {
+                None | Some("s3") => {
+                    let endpoint = get("S3_ENDPOINT").map(|e| e.trim_end_matches('/').to_owned());
+                    let region = match (get("S3_REGION"), &endpoint) {
+                        (Some(r), _) => r,
+                        // Region is only used for request signing with custom endpoints.
+                        (None, Some(_)) => "us-east-1".to_owned(),
+                        (None, None) => {
+                            return Err("S3_REGION is not set (or set UPLOAD_ENABLED=false)".into())
+                        }
+                    };
+                    let bucket = get("S3_BUCKET")
+                        .ok_or("S3_BUCKET is not set (or set UPLOAD_ENABLED=false)")?;
+                    let key_prefix = match get("S3_KEY_PREFIX") {
+                        None => "bbs/".to_owned(),
+                        Some(p) if p == "/" => String::new(),
+                        Some(p) => format!("{}/", p.trim_matches('/')),
+                    };
+                    StorageConfig::S3 {
+                        region,
+                        endpoint,
+                        bucket,
+                        key_prefix,
+                    }
+                }
+                Some("local") => StorageConfig::Local {
+                    dir: get("LOCAL_UPLOAD_DIR").unwrap_or_else(|| "./uploads".into()),
+                },
+                Some(_) => return Err("STORAGE_BACKEND must be s3 or local".into()),
+            }
+        };
+        let public_url = match (get("UPLOAD_PUBLIC_URL"), &storage) {
+            (_, StorageConfig::Disabled) => String::new(),
+            (Some(url), _) => format!("{}/", url.trim_end_matches('/')),
+            (
+                None,
+                StorageConfig::S3 {
+                    endpoint: None,
+                    region,
+                    bucket,
+                    ..
+                },
+            ) => format!("https://{}.s3.{}.amazonaws.com/", bucket, region),
+            (None, _) => {
+                return Err(
+                    "UPLOAD_PUBLIC_URL is required for local storage and custom S3 endpoints"
+                        .into(),
+                )
+            }
+        };
+        let upload = UploadConfig {
+            enabled: upload_enabled,
+            require_login: bool_or("UPLOAD_REQUIRE_LOGIN", true)?,
+            max_bytes: match get("UPLOAD_MAX_BYTES") {
+                None => 10 * 1024 * 1024,
+                Some(v) => v
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or("UPLOAD_MAX_BYTES must be a positive integer")?,
+            },
+            allowed_extensions: get("UPLOAD_ALLOWED_EXTENSIONS")
+                .map(|v| {
+                    split_list(&v, &[','])
+                        .into_iter()
+                        .map(|e| e.trim_start_matches('.').to_ascii_lowercase())
+                        .collect()
+                })
+                .unwrap_or_else(|| {
+                    ["png", "jpg", "jpeg", "gif", "webp"]
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect()
+                }),
+            public_url,
+            storage,
+        };
+
         // --- site / client ---
         let nav_links = match get("NAV_LINKS") {
             None => serde_json::Value::Array(vec![]),
@@ -287,6 +403,7 @@ impl Config {
             admin,
             cookie,
             site,
+            upload,
         })
     }
 }
@@ -329,6 +446,8 @@ mod tests {
             ("MW_BASE_URL", "https://wiki.example.org/"),
             ("OAUTH_CLIENT_ID", "id"),
             ("OAUTH_CLIENT_SECRET", "secret"),
+            ("S3_REGION", "ap-northeast-2"),
+            ("S3_BUCKET", "bucket"),
         ]
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -408,6 +527,7 @@ mod tests {
             ("OAUTH_CLIENT_SECRET", "s"),
             ("CORS", "https://a.example|https://b.example"),
             ("SENTRY_URL", "https://key@sentry.example/1"),
+            ("UPLOAD_ENABLED", "false"),
         ] {
             map.insert(k.to_string(), v.to_string());
         }
@@ -440,6 +560,62 @@ mod tests {
         assert!(!c.admin.is_admin(&["user".into()], &["read".into()]));
         assert_eq!(c.site.document_namespaces, Some(vec![0, 4, 10]));
         assert_eq!(c.site.nav_links[0]["label"], "Maps");
+    }
+
+    #[test]
+    fn test_upload() {
+        let c = config(&[]).unwrap();
+        assert!(c.upload.enabled && c.upload.require_login);
+        assert_eq!(c.upload.max_bytes, 10 * 1024 * 1024);
+        assert_eq!(
+            c.upload.public_url,
+            "https://bucket.s3.ap-northeast-2.amazonaws.com/"
+        );
+        assert_eq!(
+            c.upload.storage,
+            StorageConfig::S3 {
+                region: "ap-northeast-2".into(),
+                endpoint: None,
+                bucket: "bucket".into(),
+                key_prefix: "bbs/".into()
+            }
+        );
+        let c = config(&[
+            ("S3_REGION", ""),
+            ("S3_ENDPOINT", "https://minio.example:9000/"),
+            ("S3_KEY_PREFIX", "/images/"),
+            ("UPLOAD_PUBLIC_URL", "https://cdn.example"),
+            ("UPLOAD_ALLOWED_EXTENSIONS", ".PNG, jpg"),
+        ])
+        .unwrap();
+        assert_eq!(c.upload.public_url, "https://cdn.example/");
+        assert_eq!(c.upload.allowed_extensions, vec!["png", "jpg"]);
+        assert_eq!(
+            c.upload.storage,
+            StorageConfig::S3 {
+                region: "us-east-1".into(),
+                endpoint: Some("https://minio.example:9000".into()),
+                bucket: "bucket".into(),
+                key_prefix: "images/".into()
+            }
+        );
+        let c = config(&[
+            ("STORAGE_BACKEND", "local"),
+            ("UPLOAD_PUBLIC_URL", "https://api.example/uploads/"),
+        ])
+        .unwrap();
+        assert_eq!(
+            c.upload.storage,
+            StorageConfig::Local {
+                dir: "./uploads".into()
+            }
+        );
+        let c = config(&[("UPLOAD_ENABLED", "false"), ("S3_BUCKET", "")]).unwrap();
+        assert_eq!(c.upload.storage, StorageConfig::Disabled);
+        assert!(config(&[("STORAGE_BACKEND", "local")]).is_err());
+        assert!(config(&[("S3_ENDPOINT", "https://m.example")]).is_err());
+        assert!(config(&[("S3_BUCKET", "")]).is_err());
+        assert!(config(&[("STORAGE_BACKEND", "ftp")]).is_err());
     }
 
     #[test]
