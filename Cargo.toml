@@ -6,7 +6,8 @@ rust-version = "1.94"
 
 [dependencies]
 anyhow = "1"
-actix-web = "4"
+# HTTP/2 off: the backend sits behind a reverse proxy and only speaks HTTP/1.1.
+actix-web = { version = "4", default-features = false, features = ["macros", "compress-brotli", "compress-gzip", "compress-zstd", "cookies", "unicode", "compat"] }
 awc = { version = "3", features = ["openssl"] }
 openssl = "0.10"
 actix-cors = "0.7"
@@ -23,10 +24,11 @@ sentry-actix = "0.49"
 log = "0.4"
 env_logger = "0.11"
 derive_more = { version = "2", features = ["display", "error"] }
-jsonwebtoken = { version = "11", default-features = false, features = ["use_pem", "rust_crypto"] }
+jsonwebtoken = { version = "11", default-features = false, features = ["use_pem", "aws_lc_rs"] }
 nanoid = "0.5"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
-aws-sdk-s3 = "1"
+# No legacy hyper 0.14 / rustls 0.21 client ("rustls" feature) and no SigV4a.
+aws-sdk-s3 = { version = "1", default-features = false, features = ["http-1x", "default-https-client", "rt-tokio"] }
 tokio = { version = "1", features = ["sync"] }
 mime_guess = "2"
 base64 = "0.22"

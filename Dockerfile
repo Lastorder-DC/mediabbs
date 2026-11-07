@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---- build ----
-FROM rust:1-bookworm AS build
+FROM rust:1-trixie AS build
 RUN apt-get update \
     && apt-get install -y --no-install-recommends default-libmysqlclient-dev pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -12,9 +12,9 @@ COPY src ./src
 RUN cargo build --release --locked
 
 # ---- runtime ----
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libmariadb3 libssl3 ca-certificates \
+    && apt-get install -y --no-install-recommends libmariadb3 libssl3t64 ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home-dir /app mediabbs \
     && mkdir -p /app/uploads \

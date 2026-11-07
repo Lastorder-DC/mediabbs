@@ -1,0 +1,8 @@
+# cargo audit configuration
+[advisories]
+ignore = [
+    # h2 0.3 "unbounded empty DATA frames" (peer-triggered DoS). Pulled in only by
+    # awc 3 (latest) for the backend's own requests to the configured wiki; the
+    # backend's server side has HTTP/2 disabled. Revisit when awc moves to h2 0.4.
+    "RUSTSEC-2026-0258",
+]
