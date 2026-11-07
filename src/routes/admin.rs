@@ -8,12 +8,12 @@ use crate::db::DbPool;
 use crate::mediawiki::MwClient;
 use crate::models::menu::validate as validate_menus;
 use crate::models::{
-    Board, BoardForm, BoardPublic, DeleteBoardError, Log, LogContent, LogType, Menus, Permission,
-    SiteSetting,
+    Board, BoardForm, BoardPublic, DeleteBoardError, Log, LogContent, LogEntry, LogType, Menus,
+    Permission, SiteSetting,
 };
 use actix_web::{
-    delete, post, put, web,
-    web::{block, Data, Json, Path},
+    delete, get, post, put, web,
+    web::{block, Data, Json, Path, Query},
     HttpResponse, Scope,
 };
 use std::net::IpAddr;
@@ -275,6 +275,53 @@ async fn put_menus(
     Ok(HttpResponse::Ok().json(serde_json::json!({ "menus": req.menus })))
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LogsQuery {
+    /// Only entries older than this id (the last id of the previous page).
+    before: Option<i32>,
+    limit: Option<i64>,
+    /// Comma-separated `LogType` names.
+    types: Option<String>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct LogsResponse {
+    logs: Vec<LogEntry>,
+    /// Whether older entries exist (`before` = the last id returned).
+    has_more: bool,
+}
+
+#[get("/logs")]
+async fn get_logs(
+    pool: Data<DbPool>,
+    mw: Data<MwClient>,
+    UserInfo { token, .. }: UserInfo,
+    Query(query): Query<LogsQuery>,
+) -> Result<HttpResponse, CustomError> {
+    admin!(token, mw);
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    let mut types = Vec::new();
+    for name in query.types.as_deref().unwrap_or("").split(',') {
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        match LogType::from_name(name) {
+            Some(kind) => types.push(kind),
+            None => return Ok(HttpResponse::BadRequest().body("Invalid log type")),
+        }
+    }
+    let mut conn = pool.get()?;
+    let mut logs = block(move || Log::list(&mut conn, query.before, limit + 1, &types)).await??;
+    let has_more = logs.len() as i64 > limit;
+    logs.truncate(limit as usize);
+    Ok(HttpResponse::Ok()
+        .insert_header(("Cache-Control", "no-store"))
+        .json(LogsResponse { logs, has_more }))
+}
+
 pub fn scope() -> Scope {
     web::scope("/admin")
         .service(create_board)
@@ -282,4 +329,5 @@ pub fn scope() -> Scope {
         .service(delete_board)
         .service(reorder_boards)
         .service(put_menus)
+        .service(get_logs)
 }

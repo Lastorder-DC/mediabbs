@@ -209,6 +209,30 @@ const libertyBoardsMenu = async (page) => {
   await page.waitForSelector(".mb-admin-message:not(.error)");
   check("Removing the saved menu restores the default", (await api(page, "GET", "/config")).json.menus === null);
 
+  // --- log ---
+  const recent = await api(page, "GET", "/admin/logs?limit=3");
+  check("Log API lists the newest entries first", recent.status === 200 && recent.json.logs.length === 3 && recent.json.logs[0].type === "update_menus" && recent.json.logs[0].userName === "Admin" && recent.json.hasMore === true, recent.text.slice(0, 200));
+  check("Log API leaves out IP addresses", !("userIp" in recent.json.logs[0]));
+  const older = (await api(page, "GET", `/admin/logs?limit=1&before=${recent.json.logs[0].id}`)).json;
+  check("Log API pages with `before`", older.logs[0].id === recent.json.logs[1].id);
+  const creations = (await api(page, "GET", "/admin/logs?types=create_board")).json.logs;
+  const createdLog = creations.find((l) => l.target === created.id);
+  check("Log API filters by type and names the board", creations.every((l) => l.type === "create_board") && createdLog?.boardDisplayName === "공지 E2E" && createdLog?.boardName === name, JSON.stringify(createdLog));
+  const pinTopic = (await api(page, "GET", `/boards/${created.id}/topics?limit=1&offset=0`)).json[0];
+  await api(page, "PUT", `/topics/${pinTopic.id}/status`, { isPinned: true });
+  const pinLog = (await api(page, "GET", "/admin/logs?limit=1")).json.logs[0];
+  check("Moderation is logged with the topic and its board", pinLog.type === "pin_topic" && pinLog.topicId === pinTopic.id && pinLog.boardName === name && !!pinLog.topicTitle, JSON.stringify(pinLog));
+  check("Log API refuses unknown types", (await api(page, "GET", "/admin/logs?types=nope")).status === 400);
+  check("Anonymous: log API refuses", (await api(anon.page, "GET", "/admin/logs")).status === 401);
+  await page.click(".mb-tab >> text=관리 기록");
+  await page.waitForSelector(".mb-log-row");
+  check("Log tab shows the entries", (await page.textContent(".mb-log-row >> nth=0")).includes("주제 고정") && (await page.locator(`.mb-log-row a[href="/${name}/${pinTopic.id}"]`).count()) > 0);
+  await page.selectOption("select[name=log-filter]", "boards");
+  await page.waitForFunction(() => ![...document.querySelectorAll(".mb-log-action")].some((e) => e.textContent.includes("주제") || e.textContent.includes("메뉴")));
+  const boardActions = await page.locator(".mb-log-action").allInnerTexts();
+  check("Log tab filters by kind", boardActions.length > 0 && boardActions.every((a) => a.includes("게시판")), boardActions.slice(0, 5).join(","));
+  check("Log tab links to the board", (await page.locator(`.mb-log-row a[href="/${name}"]`).count()) > 0);
+
   // Leave the test board out of the way for other tests: last, hidden.
   boards = (await api(page, "GET", "/boards")).json;
   const ids = boards.map((b) => b.id).filter((id) => id !== created.id).concat(created.id);

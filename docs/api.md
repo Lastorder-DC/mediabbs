@@ -204,6 +204,7 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
 | `DELETE /admin/boards/{boardId}` | 주제가 없는 게시판 삭제 | `204`, `404`, `409 Board has topics` |
 | `PUT /admin/boards-order` | 메뉴 순서 바꾸기 | `Board[]`, `400 Every board must be listed once` |
 | `PUT /admin/menus` | 스킨별 메뉴 저장 | `{ "menus": … }`, `400 Invalid menu: …` |
+| `GET /admin/logs` | 관리 기록 (최신순) | 아래 참고, `400 Invalid log type` |
 
 게시판 만들기·바꾸기 (모든 필드 필요):
 
@@ -217,6 +218,29 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
 
 `name`은 `mediabbs board add`와 같은 규칙, `icon`은 Bootstrap Icons 이름(`bi-`를 붙여도 됨) 또는 `null`.
 검증 실패는 `400 Invalid board name` / `Invalid display name` / `Invalid icon name`.
+
+관리 기록은 `?limit=50&before=<id>&types=<종류>,<종류>`로 조회합니다.
+`limit`는 1–200(기본 50), `before`는 이전 페이지의 마지막 `id`(더 오래된 기록부터), `types`는 쉼표로 구분한
+종류 이름입니다: `close_topic`, `unclose_topic`, `hide_topic`, `unhide_topic`, `suspend_topic`,
+`unsuspend_topic`, `pin_topic`, `unpin_topic`, `hide_comment`, `unhide_comment`, `create_board`,
+`update_board`, `delete_board`, `reorder_boards`, `update_menus`. IP 주소는 내보내지 않습니다.
+
+```json
+{
+  "logs": [
+    {
+      "id": 42, "type": "hide_comment", "target": 410,
+      "userId": 1, "userName": "Admin", "createdAt": "2026-11-07T08:17:24Z",
+      "topicId": 368, "topicTitle": "Alice의 글",
+      "boardName": "free", "boardDisplayName": "자유게시판"
+    }
+  ],
+  "hasMore": true
+}
+```
+
+`target`은 주제·의견·게시판 ID(대상이 없으면 0)입니다. `topicId`/`topicTitle`은 주제와 의견 기록에서,
+`boardName`/`boardDisplayName`은 주제가 속한 게시판이나 게시판 기록의 게시판입니다(지워졌으면 `null`).
 
 순서 바꾸기는 모든 게시판 ID를 원하는 순서로 보냅니다.
 

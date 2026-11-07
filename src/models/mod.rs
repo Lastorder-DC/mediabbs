@@ -4,7 +4,7 @@ mod log;
 pub mod menu;
 mod site_setting;
 mod topic;
-pub use self::log::{Log, LogContent, LogType};
+pub use self::log::{Log, LogContent, LogEntry, LogType};
 pub use board::{Board, BoardForm, BoardPublic, DeleteBoardError, Permission};
 pub use comment::{Comment, CommentForm, CommentPublic};
 pub use menu::Menus;

@@ -20,7 +20,7 @@ async function api(page, method, path, body) {
 }
 
 async function typeInEditor(page, text) {
-  const ww = page.locator(".toastui-editor-ww-container .ProseMirror").first();
+  const ww = page.locator(".mb-editor .ProseMirror").first();
   await ww.click();
   await page.keyboard.type(text);
 }
@@ -54,7 +54,7 @@ async function login(browser, user, pass) {
   const libertyMenu = (await page.locator(".liberty-navbar .navbar-start .navbar-text").allInnerTexts()).slice(1);
   check("Liberty menu: its default entries", JSON.stringify(libertyMenu) === JSON.stringify(["최근 바뀜", "임의 문서", "게시판", "도구"]), libertyMenu.join(","));
   await page.click(".liberty-tools .write-button");
-  await page.waitForSelector(".editor-modal .toastui-editor-defaultUI");
+  await page.waitForSelector(".editor-modal .mb-editor");
   const title = `UI 테스트 ${Date.now()}`;
   await page.fill(".editor-modal input.input", title);
   await typeInEditor(page, "첫 의견 본문");
@@ -64,11 +64,11 @@ async function login(browser, user, pass) {
   const topicUrl = page.url();
   const topicId = Number(topicUrl.split("/").pop());
   check("Editor modal creates a topic", (await page.textContent(".topic-title")) === title, topicUrl);
-  check("First comment rendered as Markdown", (await page.textContent(".topic-comment-card .toastui-editor-contents")).includes("첫 의견 본문"));
+  check("First comment rendered as Markdown", (await page.textContent(".topic-comment-card .md-content")).includes("첫 의견 본문"));
 
   // --- comment through the modal ---
   await page.click(".new-comment-button");
-  await page.waitForSelector(".editor-modal .toastui-editor-defaultUI");
+  await page.waitForSelector(".editor-modal .mb-editor");
   await typeInEditor(page, "두 번째 의견");
   await page.click(".editor-modal .submit-button");
   await page.waitForFunction(() => document.querySelectorAll(".topic-comment-card").length === 2, null, { timeout: 10000 });
@@ -77,10 +77,43 @@ async function login(browser, user, pass) {
   // --- quote ---
   await page.locator(".topic-comment-card").nth(1).locator(".dropdown-trigger button").click();
   await page.click(".topic-comment-card >> nth=1 >> text=인용");
-  await page.waitForSelector(".editor-modal .toastui-editor-defaultUI");
-  const quoted = await page.locator(".editor-modal .toastui-editor-ww-container .ProseMirror").innerText();
+  await page.waitForSelector(".editor-modal .mb-editor");
+  const quoted = await page.locator(".editor-modal .mb-editor .ProseMirror").innerText();
   check("Quote opens the editor with the quoted text", quoted.includes("두 번째 의견") && quoted.includes("님이 작성"), quoted.replace(/\n/g, " ⏎ ").slice(0, 80));
   await page.click(".editor-modal .delete");
+
+  // --- editor: toolbar, Markdown mode, output ---
+  await page.click(".new-comment-button");
+  await page.waitForSelector(".editor-modal .mb-editor .ProseMirror");
+  await typeInEditor(page, "보통 ");
+  await page.click(".editor-modal .mb-editor-type-bold");
+  await page.keyboard.type("굵게");
+  await page.click(".editor-modal .mb-editor-type-bold");
+  await page.keyboard.press("Enter");
+  await page.click(".editor-modal .mb-editor-list-ul");
+  await page.keyboard.type("항목");
+  await page.click(".editor-modal .mb-editor-modes button >> nth=0");
+  const source = await page.inputValue(".editor-modal .mb-editor-source");
+  check("Editor: toolbar formatting comes out as Markdown", source.includes("보통 **굵게**") && source.includes("- 항목"), source.replace(/\n/g, " ⏎ "));
+  await page.fill(".editor-modal .mb-editor-source", source + "\n\n| 가 | 나 |\n| --- | --- |\n| 1 | 2 |");
+  await page.click(".editor-modal .mb-editor-modes button >> nth=1");
+  check("Editor: Markdown typed in source mode shows in the WYSIWYG view", (await page.locator(".editor-modal .ProseMirror table td").count()) === 2);
+  await page.click(".editor-modal .submit-button");
+  await page.waitForFunction(() => document.querySelectorAll(".topic-comment-card").length === 3, null, { timeout: 10000 });
+  const rendered = page.locator(".topic-comment-card >> nth=2 >> .md-content");
+  check("Editor: posted Markdown renders (bold, list, table)",
+    (await rendered.locator("strong").innerText()) === "굵게" && (await rendered.locator("li").count()) === 1 && (await rendered.locator("table td").count()) === 2);
+
+  // --- viewer: TOAST UI-era line breaks and sanitizing ---
+  const legacy = await api(page, "POST", `/topics/${topicId}/comments`, {
+    content: "줄1\n줄2\n\n문단2 <img src=x onerror=\"window.__xss=1\"> [링크](javascript:window.__xss=2)",
+  });
+  check("Viewer test comment posted", legacy.status < 300, String(legacy.status));
+  await page.reload({ waitUntil: "networkidle" });
+  const legacyHtml = await page.locator(".topic-comment-card >> nth=3 >> .md-content").innerHTML();
+  check("Viewer: single newlines stay line breaks (as TOAST UI wrote them)", /줄1<br>\s*줄2/.test(legacyHtml), legacyHtml.slice(0, 80));
+  check("Viewer: scripts and javascript: links are removed",
+    !legacyHtml.includes("onerror") && !legacyHtml.includes("javascript:") && (await page.evaluate(() => window.__xss)) === undefined);
 
   // --- error messages are translated ---
   await page.goto(BBS + "/free/99999999", { waitUntil: "networkidle" });
@@ -168,30 +201,32 @@ async function login(browser, user, pass) {
   await page.click('.s-menu-panel a[href="/free"]');
   await page.waitForURL(BBS + "/free");
   await page.waitForLoadState("networkidle");
+  await page.waitForSelector("a.s-topic-title");
   const simpleIds = await page.locator("a.s-topic-title").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
   check("Simple: switching boards via the menu shows no duplicates", simpleIds.length > 0 && simpleIds.length === new Set(simpleIds).size, `${simpleIds.length} shown`);
   const libertyCss = await page.evaluate(() => [...document.styleSheets].some((s) => [...(s.cssRules || [])].some((r) => r.selectorText === ".liberty-navbar")));
   check("No Liberty styles in the Simple skin", !libertyCss);
   await page.goto(topicUrl, { waitUntil: "networkidle" });
-  await page.waitForSelector(".simple-topic .toastui-editor-defaultUI");
+  await page.waitForSelector(".simple-topic .mb-editor");
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 800 });
     await page.waitForTimeout(300);
     const fits = await page.evaluate(() => {
       const box = document.querySelector(".simple-topic .s-compose").getBoundingClientRect();
-      const ed = document.querySelector(".simple-topic .toastui-editor-defaultUI").getBoundingClientRect();
+      const ed = document.querySelector(".simple-topic .mb-editor").getBoundingClientRect();
       return ed.left >= box.left && ed.right <= box.right;
     });
     check(`Simple editor stays inside its box (${width}px)`, fits);
   }
   await page.setViewportSize({ width: 1280, height: 720 });
+  const simpleBefore = await page.locator(".s-comment").count();
   await typeInEditor(page, "심플 스킨 의견");
   await page.click(".simple-topic .submit-button");
-  await page.waitForFunction(() => document.querySelectorAll(".s-comment").length === 3, null, { timeout: 10000 });
+  await page.waitForFunction((n) => document.querySelectorAll(".s-comment").length === n + 1, simpleBefore, { timeout: 10000 });
   check("Simple skin posts a comment", true);
   await page.click(".s-comment >> nth=0 >> text=인용");
   await page.waitForTimeout(300);
-  const simpleQuote = await page.locator(".simple-topic .toastui-editor-ww-container .ProseMirror").innerText();
+  const simpleQuote = await page.locator(".simple-topic .mb-editor .ProseMirror").innerText();
   check("Simple skin quote fills the editor", simpleQuote.includes("첫 의견 본문"), simpleQuote.slice(0, 60));
   await Promise.all([page.waitForEvent("load"), page.selectOption(".s-footer select[aria-label='스킨']", "liberty")]);
   check("Skin switch back to Liberty", await page.isVisible(".liberty-app"));
