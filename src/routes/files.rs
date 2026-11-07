@@ -10,6 +10,7 @@ use actix_web::{
     HttpResponse, Scope,
 };
 use actix_web_validator::Json;
+use base64::Engine as _;
 use validator::Validate;
 
 #[derive(Deserialize, Validate, Debug)]
@@ -58,7 +59,7 @@ async fn post_files(
             )))
         }
     };
-    let bytes = match base64::decode(content.trim()) {
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(content.trim()) {
         Ok(bytes) => bytes,
         Err(_) => return Ok(HttpResponse::BadRequest().body("Invalid base64 content")),
     };
@@ -97,8 +98,9 @@ async fn post_files(
 #[get("{filename}")]
 async fn get_upload(
     storage: Data<Storage>,
-    Path((filename,)): Path<(String,)>,
+    filename: Path<String>,
 ) -> Result<HttpResponse, CustomError> {
+    let filename = filename.into_inner();
     let dir = match storage.local_dir() {
         Some(dir) => dir,
         None => return Ok(HttpResponse::NotFound().finish()),
@@ -107,7 +109,7 @@ async fn get_upload(
         return Ok(HttpResponse::NotFound().finish());
     }
     let path = dir.join(&filename);
-    let bytes = match web::block(move || std::fs::read(path)).await {
+    let bytes = match web::block(move || std::fs::read(path)).await? {
         Ok(bytes) => bytes,
         Err(_) => return Ok(HttpResponse::NotFound().finish()),
     };
@@ -115,9 +117,9 @@ async fn get_upload(
     let mime = mime_guess::from_ext(ext).first_or_octet_stream();
     Ok(HttpResponse::Ok()
         .content_type(mime.to_string())
-        .set_header("Cache-Control", "public, max-age=31536000, immutable")
-        .set_header("X-Content-Type-Options", "nosniff")
-        .set_header("Content-Security-Policy", "default-src 'none'; sandbox")
+        .insert_header(("Cache-Control", "public, max-age=31536000, immutable"))
+        .insert_header(("X-Content-Type-Options", "nosniff"))
+        .insert_header(("Content-Security-Policy", "default-src 'none'; sandbox"))
         .body(bytes))
 }
 
@@ -169,13 +171,13 @@ mod tests {
             .peer_addr("203.0.113.5:1234".parse().unwrap())
             .set_json(&serde_json::json!({
                 "filename": filename,
-                "content": base64::encode(bytes),
+                "content": base64::engine::general_purpose::STANDARD.encode(bytes),
             }))
     }
 
     async fn run_upload_flow(dir: std::path::PathBuf) {
         let config = test_config(&dir, false);
-        let mut app = test::init_service(
+        let app = test::init_service(
             App::new()
                 .app_data(Data::from(config.clone()))
                 .app_data(Data::new(MwClient::new(config.clone())))
@@ -185,14 +187,14 @@ mod tests {
         )
         .await;
 
-        let res = test::call_service(&mut app, post("x.html", PNG).to_request()).await;
+        let res = test::call_service(&app, post("x.html", PNG).to_request()).await;
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-        let res = test::call_service(&mut app, post("x.png", b"<script>").to_request()).await;
+        let res = test::call_service(&app, post("x.png", b"<script>").to_request()).await;
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-        let res = test::call_service(&mut app, post("x.png", &[0x89u8; 100]).to_request()).await;
+        let res = test::call_service(&app, post("x.png", &[0x89u8; 100]).to_request()).await;
         assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
 
-        let res = test::call_service(&mut app, post("Photo.PNG", PNG).to_request()).await;
+        let res = test::call_service(&app, post("Photo.PNG", PNG).to_request()).await;
         assert_eq!(res.status(), StatusCode::OK);
         let stored: serde_json::Value = test::read_body_json(res).await;
         let path = stored["path"].as_str().unwrap().to_owned();
@@ -205,7 +207,7 @@ mod tests {
         let req = test::TestRequest::get()
             .uri(&format!("/uploads/{}", path))
             .to_request();
-        let res = test::call_service(&mut app, req).await;
+        let res = test::call_service(&app, req).await;
         assert_eq!(res.status(), StatusCode::OK);
         assert_eq!(res.headers().get("content-type").unwrap(), "image/png");
         assert_eq!(
@@ -217,12 +219,12 @@ mod tests {
         let req = test::TestRequest::get()
             .uri("/uploads/..%2Fsecret.png")
             .to_request();
-        let res = test::call_service(&mut app, req).await;
+        let res = test::call_service(&app, req).await;
         assert_eq!(res.status(), StatusCode::NOT_FOUND);
 
         // Anonymous uploads rejected when login is required
         let config = test_config(&dir, true);
-        let mut app = test::init_service(
+        let app = test::init_service(
             App::new()
                 .app_data(Data::from(config.clone()))
                 .app_data(Data::new(MwClient::new(config.clone())))
@@ -230,22 +232,20 @@ mod tests {
                 .service(scope(&config)),
         )
         .await;
-        let res = test::call_service(&mut app, post("x.png", PNG).to_request()).await;
+        let res = test::call_service(&app, post("x.png", PNG).to_request()).await;
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(test::read_body(res).await, "LoginRequired");
     }
 
-    #[test]
-    fn test_upload_flow() {
+    #[actix_web::test]
+    async fn test_upload_flow() {
         let dir = std::env::temp_dir().join(format!("mediabbs-files-{}", nanoid::nanoid!()));
-        let d = dir.clone();
-        actix_web::rt::System::new("test_upload_flow")
-            .block_on(async move { run_upload_flow(d).await });
+        run_upload_flow(dir.clone()).await;
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn test_allowed_extension() {
+    #[actix_web::test]
+    async fn test_allowed_extension() {
         let allowed = vec!["png".to_owned(), "jpg".to_owned()];
         assert_eq!(allowed_extension("a.PNG", &allowed), Some("png".into()));
         assert_eq!(

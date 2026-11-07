@@ -36,7 +36,7 @@ pub struct Log {
 }
 
 #[derive(Insertable)]
-#[table_name = "logs"]
+#[diesel(table_name = logs)]
 struct NewLog<'a> {
     pub log_type_id: i32,
     pub content: &'a str,
@@ -47,7 +47,7 @@ struct NewLog<'a> {
 
 impl Log {
     pub fn add(
-        conn: &MysqlConnection,
+        conn: &mut MysqlConnection,
         log_type: &LogType,
         content: &LogContent,
         user_id: Option<i32>,

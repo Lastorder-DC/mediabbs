@@ -17,11 +17,11 @@ use crate::config::Config;
 use actix_web::{
     dev,
     error::ErrorBadRequest,
-    http::{HeaderMap, HeaderValue},
+    http::header::{HeaderMap, HeaderValue},
     web::Data,
     Error, FromRequest, HttpRequest,
 };
-use futures::future::{err, ok, Ready};
+use std::future::{ready, Ready};
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     str::FromStr,
@@ -166,19 +166,8 @@ fn parse_addr(s: &str) -> Option<IpAddr> {
     None
 }
 
-/// Returns all values of a header in the order they appeared in the request.
-///
-/// actix-http 2.x `HeaderMap::append` places the second value *before* the first
-/// when a header is converted from one to multiple values (`[v2, v1, v3, ...]`),
-/// and its HTTP/1 decoder uses `append`. Swap the first two back.
-/// NOTE: remove this workaround when upgrading actix-web; `test_chain_xff` will
-/// fail if the library behaviour changes.
 fn header_values<'a>(headers: &'a HeaderMap, name: &str) -> Vec<&'a HeaderValue> {
-    let mut values: Vec<_> = headers.get_all(name).collect();
-    if values.len() >= 2 {
-        values.swap(0, 1);
-    }
-    values
+    headers.get_all(name).collect()
 }
 
 /// Returns the forwarding chain, origin first. Entries that cannot be parsed
@@ -235,7 +224,6 @@ fn resolve_client_ip(peer: IpAddr, chain: &[Option<IpAddr>], trust: &TrustProxy)
 impl FromRequest for ConnectionInfo {
     type Error = Error;
     type Future = Ready<Result<Self, Error>>;
-    type Config = ();
 
     fn from_request(req: &HttpRequest, _payload: &mut dev::Payload) -> Self::Future {
         match req.peer_addr() {
@@ -245,9 +233,9 @@ impl FromRequest for ConnectionInfo {
                     Some(config) => resolve_client_ip(peer.ip(), &chain, &config.trust_proxy),
                     None => resolve_client_ip(peer.ip(), &chain, &TrustProxy::default_loopback()),
                 };
-                ok(ConnectionInfo { ip })
+                ready(Ok(ConnectionInfo { ip }))
             }
-            None => err(ErrorBadRequest("No IP address")),
+            None => ready(Err(ErrorBadRequest("No IP address"))),
         }
     }
 }
@@ -255,7 +243,7 @@ impl FromRequest for ConnectionInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::http::HeaderName;
+    use actix_web::http::header::HeaderName;
 
     fn ip(s: &str) -> IpAddr {
         IpAddr::from_str(s).unwrap()

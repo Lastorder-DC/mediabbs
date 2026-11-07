@@ -4,8 +4,9 @@
 
 use crate::auth::Profile;
 use crate::config::{Config, MwConfig};
-use actix_web::{client::Client, http::StatusCode, web::Bytes};
+use actix_web::{http::StatusCode, web::Bytes};
 use anyhow::{anyhow, Result};
+use awc::Client;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::{
     collections::HashMap,
@@ -17,7 +18,7 @@ use std::{
 /// The wiki rejected the access token (revoked, expired on the wiki side, ...).
 /// Turned into `401 TokenInvalid` by [`crate::custom_error::CustomError`].
 #[derive(Debug, derive_more::Display, derive_more::Error)]
-#[display(fmt = "the wiki rejected the access token")]
+#[display("the wiki rejected the access token")]
 pub struct WikiAuthError;
 
 const SITEINFO_TTL: Duration = Duration::from_secs(60 * 60);
@@ -253,7 +254,7 @@ impl MwClient {
 
     fn client(&self) -> Client {
         Client::builder()
-            .header("User-Agent", self.mw().user_agent.as_str())
+            .add_default_header(("User-Agent", self.mw().user_agent.as_str()))
             .timeout(HTTP_TIMEOUT)
             .finish()
     }
@@ -262,7 +263,7 @@ impl MwClient {
         let mut res = self
             .client()
             .post(self.mw().token_url())
-            .header("Accept", "application/json")
+            .insert_header(("Accept", "application/json"))
             .send_form(request)
             .await
             .map_err(|e| anyhow!("token request failed: {}", e))?;
@@ -302,8 +303,8 @@ impl MwClient {
         let mut res = self
             .client()
             .get(self.mw().profile_url())
-            .header("Accept", "application/json")
-            .header("Authorization", format!("Bearer {}", token))
+            .insert_header(("Accept", "application/json"))
+            .insert_header(("Authorization", format!("Bearer {}", token)))
             .send()
             .await
             .map_err(|e| anyhow!("profile request failed: {}", e))?;
@@ -350,7 +351,7 @@ impl MwClient {
                 ("bklimit", "1"),
                 ("format", "json"),
             ])?
-            .header("Accept", "application/json")
+            .insert_header(("Accept", "application/json"))
             .send()
             .await
             .map_err(|e| anyhow!("block check failed: {}", e))?;
@@ -405,7 +406,7 @@ impl MwClient {
                 ("format", "json"),
                 ("formatversion", "2"),
             ])?
-            .header("Accept", "application/json")
+            .insert_header(("Accept", "application/json"))
             .send()
             .await
             .map_err(|e| anyhow!("siteinfo request failed: {}", e))?;

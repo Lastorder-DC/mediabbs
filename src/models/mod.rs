@@ -20,7 +20,7 @@ fn etag_equals(request: &HttpRequest, etag: &str) -> bool {
         let request_etag = v.to_str().unwrap_or_default().replace("\"", "");
         return request_etag == etag;
     }
-    return false;
+    false
 }
 
 pub trait PublicEntity {
@@ -40,12 +40,12 @@ where
     }
     fn cache_response(&self, request: &HttpRequest) -> HttpResponse {
         let etag = self.get_etag();
-        if etag_equals(&request, &etag) {
+        if etag_equals(request, &etag) {
             HttpResponse::NotModified().finish()
         } else {
             HttpResponse::Ok()
-                .set(ETag(EntityTag::strong(etag)))
-                .json(&self)
+                .insert_header(ETag(EntityTag::new_strong(etag)))
+                .json(self)
         }
     }
 }

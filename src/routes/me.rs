@@ -11,8 +11,8 @@ async fn get_me(
     if let Some(token) = token {
         let profile = mw.profile(&token).await?;
         Ok(HttpResponse::Ok()
-            .set_header("Cache-Control", "private, max-age=60")
-            .set_header("Vary", "Cookie")
+            .insert_header(("Cache-Control", "private, max-age=60"))
+            .insert_header(("Vary", "Cookie"))
             .json(profile))
     } else {
         Ok(HttpResponse::Unauthorized().body("TokenMissing"))

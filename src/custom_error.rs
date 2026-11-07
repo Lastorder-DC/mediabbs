@@ -1,4 +1,4 @@
-use actix_web::{dev::HttpResponseBuilder, error, http::header, http::StatusCode, HttpResponse};
+use actix_web::{error, http::header, http::StatusCode, HttpResponse, HttpResponseBuilder};
 use derive_more::{Display, Error};
 
 #[derive(Debug, Display, Error)]
@@ -14,7 +14,7 @@ impl error::ResponseError for CustomError {
             "INTERNAL SERVER ERROR"
         };
         HttpResponseBuilder::new(self.status_code())
-            .set_header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .insert_header((header::CONTENT_TYPE, "text/plain; charset=utf-8"))
             .body(body)
     }
     fn status_code(&self) -> StatusCode {
@@ -28,20 +28,22 @@ impl error::ResponseError for CustomError {
 
 impl CustomError {
     fn is_wiki_auth_error(&self) -> bool {
-        self.err.downcast_ref::<crate::mediawiki::WikiAuthError>().is_some()
+        self.err
+            .downcast_ref::<crate::mediawiki::WikiAuthError>()
+            .is_some()
     }
 }
 
-impl From<r2d2::Error> for CustomError {
-    fn from(err: r2d2::Error) -> CustomError {
+impl From<diesel::r2d2::PoolError> for CustomError {
+    fn from(err: diesel::r2d2::PoolError) -> CustomError {
         CustomError {
             err: anyhow::anyhow!(err),
         }
     }
 }
 
-impl From<actix_web::error::BlockingError<anyhow::Error>> for CustomError {
-    fn from(err: actix_web::error::BlockingError<anyhow::Error>) -> CustomError {
+impl From<actix_web::error::BlockingError> for CustomError {
+    fn from(err: actix_web::error::BlockingError) -> CustomError {
         CustomError {
             err: anyhow::anyhow!(err),
         }

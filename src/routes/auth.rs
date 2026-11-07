@@ -2,6 +2,7 @@ use crate::auth::RefreshToken;
 use crate::config::{Config, CookieConfig, SameSite};
 use crate::custom_error::CustomError;
 use crate::mediawiki::{MwClient, TokenPair};
+use actix_web::cookie::time::Duration;
 use actix_web::{
     cookie::{self, Cookie},
     post,
@@ -10,7 +11,6 @@ use actix_web::{
 };
 use actix_web_validator::Json;
 use anyhow::anyhow;
-use time::Duration;
 use validator::Validate;
 
 #[derive(Deserialize, Validate, Debug)]
@@ -51,7 +51,7 @@ fn token_response(
             t.refresh_token.as_str(),
             Duration::days(config.max_age_days),
         ),
-        None => ("", "", Duration::zero()),
+        None => ("", "", Duration::ZERO),
     };
     let mut response = HttpResponse::NoContent().finish();
     response

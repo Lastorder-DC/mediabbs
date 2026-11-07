@@ -15,24 +15,24 @@ pub struct Board {
 }
 
 impl Board {
-    pub fn get_all(conn: &MysqlConnection) -> Result<Vec<Self>> {
+    pub fn get_all(conn: &mut MysqlConnection) -> Result<Vec<Self>> {
         let results = boards::table.load::<Self>(conn)?;
         Ok(results)
     }
-    pub fn find_by_name(conn: &MysqlConnection, name: &str) -> Result<Self> {
+    pub fn find_by_name(conn: &mut MysqlConnection, name: &str) -> Result<Self> {
         let board = boards::table
             .filter(boards::name.eq(name))
             .first::<Self>(conn)?;
         Ok(board)
     }
-    pub fn create(conn: &MysqlConnection, name: &str, display_name: &str) -> Result<()> {
+    pub fn create(conn: &mut MysqlConnection, name: &str, display_name: &str) -> Result<()> {
         diesel::insert_into(boards::table)
             .values((boards::name.eq(name), boards::display_name.eq(display_name)))
             .execute(conn)?;
         Ok(())
     }
     pub fn set_display_name(
-        conn: &MysqlConnection,
+        conn: &mut MysqlConnection,
         name: &str,
         display_name: &str,
     ) -> Result<usize> {
@@ -41,7 +41,7 @@ impl Board {
             .execute(conn)?;
         Ok(n)
     }
-    pub fn set_active(conn: &MysqlConnection, name: &str, is_active: bool) -> Result<usize> {
+    pub fn set_active(conn: &mut MysqlConnection, name: &str, is_active: bool) -> Result<usize> {
         let n = diesel::update(boards::table.filter(boards::name.eq(name)))
             .set(boards::is_active.eq(is_active))
             .execute(conn)?;
@@ -64,13 +64,13 @@ impl Board {
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
             && !RESERVED.contains(&name)
     }
-    pub fn find_by_id(conn: &MysqlConnection, id: i32) -> Result<Self> {
+    pub fn find_by_id(conn: &mut MysqlConnection, id: i32) -> Result<Self> {
         let post = boards::table.find(id).first::<Self>(conn)?;
         Ok(post)
     }
     pub fn get_topics(
         &self,
-        conn: &MysqlConnection,
+        conn: &mut MysqlConnection,
         limit: i32,
         offset: i32,
         include_hidden: bool,
@@ -94,8 +94,8 @@ impl Board {
             display_name: self.display_name.clone(),
             name: self.name.clone(),
             is_active: self.is_active,
-            created_at: DateTime::<Utc>::from_utc(self.created_at, Utc),
-            updated_at: DateTime::<Utc>::from_utc(self.updated_at, Utc),
+            created_at: self.created_at.and_utc(),
+            updated_at: self.updated_at.and_utc(),
         }
     }
 }

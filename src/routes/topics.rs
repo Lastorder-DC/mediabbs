@@ -9,7 +9,6 @@ use crate::models::{
     Board, Comment, CommentPublic, Log, LogContent, LogType, PublicEntity, Topic, TopicForm,
 };
 use actix_web::{
-    error::BlockingError,
     get, post, put, web,
     web::{block, Data, Path, Query},
     HttpRequest, HttpResponse, Scope,
@@ -22,11 +21,12 @@ use validator::Validate;
 #[get("{topic_id}")]
 async fn get_topic(
     pool: Data<DbPool>,
-    Path((topic_id,)): Path<(i32,)>,
+    topic_id: Path<i32>,
     request: HttpRequest,
 ) -> Result<HttpResponse, CustomError> {
-    let conn = pool.get()?;
-    match block(move || Topic::find_by_id(&conn, topic_id)).await {
+    let topic_id = topic_id.into_inner();
+    let mut conn = pool.get()?;
+    match block(move || Topic::find_by_id(&mut conn, topic_id)).await? {
         Ok(topic) => {
             if topic.is_hidden {
                 Ok(HttpResponse::Forbidden().body("Topic is hidden"))
@@ -34,8 +34,7 @@ async fn get_topic(
                 Ok(topic.get_public().cache_response(&request))
             }
         }
-        Err(BlockingError::Error(_)) => Ok(HttpResponse::NotFound().body("Topic is not found")),
-        Err(BlockingError::Canceled) => Err(BlockingError::Canceled.into()),
+        Err(_) => Ok(HttpResponse::NotFound().body("Topic is not found")),
     }
 }
 
@@ -49,7 +48,7 @@ struct PutTopicStatusRequest {
 }
 
 fn log_put_topic_status(
-    conn: &MysqlConnection,
+    conn: &mut MysqlConnection,
     topic_id: i32,
     user_id: Option<i32>,
     user_name: Option<&str>,
@@ -92,12 +91,12 @@ fn log_put_topic_status(
         _ => return Ok(()),
     };
     Log::add(
-        &conn,
+        conn,
         &log_type,
         &LogContent { target: topic_id },
         user_id,
         user_name,
-        &user_ip,
+        user_ip,
     )?;
     Ok(())
 }
@@ -107,10 +106,11 @@ async fn put_topic_status(
     pool: Data<DbPool>,
     mw: Data<MwClient>,
     UserInfo { token, .. }: UserInfo,
-    Path((topic_id,)): Path<(i32,)>,
+    topic_id: Path<i32>,
     Json(req_status): Json<PutTopicStatusRequest>,
     ConnectionInfo { ip }: ConnectionInfo,
 ) -> Result<HttpResponse, CustomError> {
+    let topic_id = topic_id.into_inner();
     #[derive(Debug, Display)]
     enum ErrorKind {
         TopicNotFound,
@@ -131,10 +131,10 @@ async fn put_topic_status(
         return Ok(HttpResponse::Forbidden().finish());
     }
 
-    let conn = pool.get()?;
+    let mut conn = pool.get()?;
     let res = block(move || {
-        conn.transaction::<Topic, _, _>(|| {
-            Topic::find_by_id(&conn, topic_id).map_err(|_| ErrorKind::TopicNotFound)?;
+        conn.transaction::<Topic, _, _>(|conn| {
+            Topic::find_by_id(conn, topic_id).map_err(|_| ErrorKind::TopicNotFound)?;
             let topic_changes = TopicForm {
                 id: topic_id,
                 is_closed: req_status.is_closed,
@@ -142,30 +142,25 @@ async fn put_topic_status(
                 is_hidden: req_status.is_hidden,
                 is_pinned: req_status.is_pinned,
             };
-            let changed = topic_changes
-                .save(&conn)
-                .map_err(|e| ErrorKind::OtherError(e))?;
+            let changed = topic_changes.save(conn).map_err(ErrorKind::OtherError)?;
             log_put_topic_status(
-                &conn,
+                conn,
                 topic_id,
                 Some(profile.id),
                 Some(&profile.username),
                 &ip,
                 req_status,
             )
-            .map_err(|e| ErrorKind::OtherError(e))?;
+            .map_err(ErrorKind::OtherError)?;
             Ok(changed)
         })
     })
-    .await;
+    .await?;
 
     match res {
         Ok(topic) => Ok(HttpResponse::Ok().json(topic.get_public())),
-        Err(BlockingError::Error(ErrorKind::TopicNotFound)) => {
-            Ok(HttpResponse::NotFound().body("Topic is not found"))
-        }
-        Err(BlockingError::Error(ErrorKind::OtherError(e))) => Err(e.into()),
-        Err(BlockingError::Canceled) => Err(BlockingError::Canceled.into()),
+        Err(ErrorKind::TopicNotFound) => Ok(HttpResponse::NotFound().body("Topic is not found")),
+        Err(ErrorKind::OtherError(e)) => Err(e.into()),
     }
 }
 
@@ -178,10 +173,11 @@ struct GetCommentsQuery {
 #[get("{topic_id}/comments")]
 async fn get_topic_comments(
     pool: Data<DbPool>,
-    Path((topic_id,)): Path<(i32,)>,
+    topic_id: Path<i32>,
     query: Query<GetCommentsQuery>,
     request: HttpRequest,
 ) -> Result<HttpResponse, CustomError> {
+    let topic_id = topic_id.into_inner();
     #[derive(Debug, Display)]
     enum ErrorKind {
         TopicNotFound,
@@ -193,21 +189,21 @@ async fn get_topic_comments(
     let limit = if limit > 20 { 20 } else { limit };
     let offset = query.offset.unwrap_or(0);
 
-    let conn = pool.get()?;
+    let mut conn = pool.get()?;
     let res = block(move || {
-        if let Ok(topic) = Topic::find_by_id(&conn, topic_id) {
+        if let Ok(topic) = Topic::find_by_id(&mut conn, topic_id) {
             if topic.is_hidden {
                 return Err(ErrorKind::TopicIsHidden);
             }
             let comments = topic
-                .get_comments(&conn, limit, offset)
-                .map_err(|e| ErrorKind::OtherError(e))?;
+                .get_comments(&mut conn, limit, offset)
+                .map_err(ErrorKind::OtherError)?;
             Ok(comments)
         } else {
             Err(ErrorKind::TopicNotFound)
         }
     })
-    .await;
+    .await?;
     match res {
         Ok(comments) => {
             let comments = comments
@@ -216,14 +212,9 @@ async fn get_topic_comments(
                 .collect::<Vec<CommentPublic>>();
             Ok(comments.cache_response(&request))
         }
-        Err(BlockingError::Error(ErrorKind::TopicNotFound)) => {
-            Ok(HttpResponse::NotFound().body("Topic is not found"))
-        }
-        Err(BlockingError::Error(ErrorKind::TopicIsHidden)) => {
-            Ok(HttpResponse::Forbidden().body("Topic is hidden"))
-        }
-        Err(BlockingError::Error(ErrorKind::OtherError(e))) => Err(e.into()),
-        Err(BlockingError::Canceled) => Err(BlockingError::Canceled.into()),
+        Err(ErrorKind::TopicNotFound) => Ok(HttpResponse::NotFound().body("Topic is not found")),
+        Err(ErrorKind::TopicIsHidden) => Ok(HttpResponse::Forbidden().body("Topic is hidden")),
+        Err(ErrorKind::OtherError(e)) => Err(e.into()),
     }
 }
 
@@ -269,41 +260,38 @@ async fn post_topic(
         return Ok(HttpResponse::Forbidden().body("You are blocked"));
     }
 
-    let conn = pool.get()?;
-    let res = block::<_, Topic, ErrorKind>(move || {
-        let board = Board::find_by_id(&conn, board_id).map_err(|_| ErrorKind::BoardNotFound)?;
+    let mut conn = pool.get()?;
+    let res = block(move || -> Result<Topic, ErrorKind> {
+        let board = Board::find_by_id(&mut conn, board_id).map_err(|_| ErrorKind::BoardNotFound)?;
         if !board.is_active {
             return Err(ErrorKind::BoardIsInactive);
         }
         let topic = conn
-            .transaction::<Topic, _, _>(|| match profile {
+            .transaction::<Topic, _, _>(|conn| match profile {
                 Some(Profile { id, username, .. }) => {
-                    Topic::create(&conn, &board, &title, Some(id), Some(&username), &ip)?;
-                    let topic = Topic::get_latest(&conn)?;
-                    Comment::create(&conn, &topic, &content, Some(id), Some(&username), &ip)?;
+                    Topic::create(conn, &board, &title, Some(id), Some(&username), &ip)?;
+                    let topic = Topic::get_latest(conn)?;
+                    Comment::create(conn, &topic, &content, Some(id), Some(&username), &ip)?;
                     Ok(topic)
                 }
                 None => {
-                    Topic::create(&conn, &board, &title, None, None, &ip)?;
-                    let topic = Topic::get_latest(&conn)?;
-                    Comment::create(&conn, &topic, &content, None, None, &ip)?;
+                    Topic::create(conn, &board, &title, None, None, &ip)?;
+                    let topic = Topic::get_latest(conn)?;
+                    Comment::create(conn, &topic, &content, None, None, &ip)?;
                     Ok(topic)
                 }
             })
-            .map_err(|e| ErrorKind::OtherError(e))?;
+            .map_err(ErrorKind::OtherError)?;
         Ok(topic)
     })
-    .await;
+    .await?;
     match res {
         Ok(topic) => Ok(HttpResponse::Ok().json(topic.get_public())),
-        Err(BlockingError::Error(ErrorKind::BoardNotFound)) => {
-            Ok(HttpResponse::NotFound().body("Board is not found"))
-        }
-        Err(BlockingError::Error(ErrorKind::BoardIsInactive)) => {
+        Err(ErrorKind::BoardNotFound) => Ok(HttpResponse::NotFound().body("Board is not found")),
+        Err(ErrorKind::BoardIsInactive) => {
             Ok(HttpResponse::Forbidden().body("Board is not active"))
         }
-        Err(BlockingError::Error(ErrorKind::OtherError(e))) => Err(e.into()),
-        Err(BlockingError::Canceled) => Err(BlockingError::Canceled.into()),
+        Err(ErrorKind::OtherError(e)) => Err(e.into()),
     }
 }
 
@@ -318,11 +306,12 @@ struct PostCommentRequest {
 async fn post_topic_comments(
     ConnectionInfo { ip }: ConnectionInfo,
     Json(PostCommentRequest { content }): Json<PostCommentRequest>,
-    Path((topic_id,)): Path<(i32,)>,
+    topic_id: Path<i32>,
     UserInfo { token, .. }: UserInfo,
     pool: Data<DbPool>,
     mw: Data<MwClient>,
 ) -> Result<HttpResponse, CustomError> {
+    let topic_id = topic_id.into_inner();
     #[derive(Debug, Display)]
     enum ErrorKind {
         TopicNotFound,
@@ -346,9 +335,9 @@ async fn post_topic_comments(
         return Ok(HttpResponse::Forbidden().body("You are blocked"));
     }
 
-    let conn = pool.get()?;
-    let res = block::<_, (), ErrorKind>(move || {
-        let topic = Topic::find_by_id(&conn, topic_id).map_err(|_| ErrorKind::TopicNotFound)?;
+    let mut conn = pool.get()?;
+    let res = block(move || -> Result<(), ErrorKind> {
+        let topic = Topic::find_by_id(&mut conn, topic_id).map_err(|_| ErrorKind::TopicNotFound)?;
         if topic.is_hidden {
             return Err(ErrorKind::TopicIsHidden);
         } else if topic.is_closed {
@@ -356,43 +345,36 @@ async fn post_topic_comments(
         } else if topic.is_suspended {
             return Err(ErrorKind::TopicIsSuspended);
         }
-        match Board::find_by_id(&conn, topic.board_id) {
+        match Board::find_by_id(&mut conn, topic.board_id) {
             Ok(board) if !board.is_active => return Err(ErrorKind::BoardIsInactive),
             Ok(_) => {}
             Err(e) => return Err(ErrorKind::OtherError(e)),
         }
         match profile {
             Some(Profile { id, username, .. }) => {
-                Comment::create(&conn, &topic, &content, Some(id), Some(&username), &ip)
-                    .map_err(|e| ErrorKind::OtherError(e))?;
+                Comment::create(&mut conn, &topic, &content, Some(id), Some(&username), &ip)
+                    .map_err(ErrorKind::OtherError)?;
             }
             None => {
-                Comment::create(&conn, &topic, &content, None, None, &ip)
-                    .map_err(|e| ErrorKind::OtherError(e))?;
+                Comment::create(&mut conn, &topic, &content, None, None, &ip)
+                    .map_err(ErrorKind::OtherError)?;
             }
         };
         Ok(())
     })
-    .await;
+    .await?;
     match res {
         Ok(()) => Ok(HttpResponse::NoContent().finish()),
-        Err(BlockingError::Error(ErrorKind::TopicNotFound)) => {
-            Ok(HttpResponse::NotFound().body("Topic is not found"))
-        }
-        Err(BlockingError::Error(ErrorKind::TopicIsHidden)) => {
-            Ok(HttpResponse::Forbidden().body("Topic is hidden"))
-        }
-        Err(BlockingError::Error(ErrorKind::TopicIsClosed)) => {
-            Ok(HttpResponse::Forbidden().body("Topic is closed"))
-        }
-        Err(BlockingError::Error(ErrorKind::TopicIsSuspended)) => {
+        Err(ErrorKind::TopicNotFound) => Ok(HttpResponse::NotFound().body("Topic is not found")),
+        Err(ErrorKind::TopicIsHidden) => Ok(HttpResponse::Forbidden().body("Topic is hidden")),
+        Err(ErrorKind::TopicIsClosed) => Ok(HttpResponse::Forbidden().body("Topic is closed")),
+        Err(ErrorKind::TopicIsSuspended) => {
             Ok(HttpResponse::Forbidden().body("Topic is suspended"))
         }
-        Err(BlockingError::Error(ErrorKind::BoardIsInactive)) => {
+        Err(ErrorKind::BoardIsInactive) => {
             Ok(HttpResponse::Forbidden().body("Board is not active"))
         }
-        Err(BlockingError::Error(ErrorKind::OtherError(e))) => Err(e.into()),
-        Err(BlockingError::Canceled) => Err(BlockingError::Canceled.into()),
+        Err(ErrorKind::OtherError(e)) => Err(e.into()),
     }
 }
 

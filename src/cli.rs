@@ -34,7 +34,7 @@ Commands other than serve only need DATABASE_URL (environment or .env).";
 
 /// Runs a CLI command and returns the process exit code.
 pub fn run(args: &[String]) -> i32 {
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match execute(&args) {
         Ok(()) => 0,
@@ -72,14 +72,14 @@ fn execute(args: &[&str]) -> Result<()> {
             Ok(())
         }
         ["migrate"] => {
-            let conn = connect()?;
-            db::run_migrations(&conn, true)?;
+            let mut conn = connect()?;
+            db::run_migrations(&mut conn, true)?;
             println!("Migrations are up to date.");
             Ok(())
         }
         ["board", "list"] => {
-            let conn = connect()?;
-            let boards = Board::get_all(&conn)?;
+            let mut conn = connect()?;
+            let boards = Board::get_all(&mut conn)?;
             if boards.is_empty() {
                 println!("No boards. Create one with: mediabbs board add <name> <display name>");
             }
@@ -103,19 +103,19 @@ fn execute(args: &[&str]) -> Result<()> {
                 );
             }
             let display_name = join_rest(rest)?;
-            let conn = connect()?;
-            if Board::find_by_name(&conn, name).is_ok() {
+            let mut conn = connect()?;
+            if Board::find_by_name(&mut conn, name).is_ok() {
                 bail!("board '{}' already exists", name);
             }
-            Board::create(&conn, name, &display_name)?;
+            Board::create(&mut conn, name, &display_name)?;
             println!("Created board '{}' ({}).", name, display_name);
             Ok(())
         }
         ["board", "rename", name, rest @ ..] => {
             let display_name = join_rest(rest)?;
-            let conn = connect()?;
-            match Board::set_display_name(&conn, name, &display_name)? {
-                0 if Board::find_by_name(&conn, name).is_err() => {
+            let mut conn = connect()?;
+            match Board::set_display_name(&mut conn, name, &display_name)? {
+                0 if Board::find_by_name(&mut conn, name).is_err() => {
                     bail!("board '{}' not found", name)
                 }
                 _ => println!("Board '{}' is now called '{}'.", name, display_name),
@@ -124,11 +124,11 @@ fn execute(args: &[&str]) -> Result<()> {
         }
         ["board", action @ ("enable" | "disable"), name] => {
             let active = *action == "enable";
-            let conn = connect()?;
-            if Board::find_by_name(&conn, name).is_err() {
+            let mut conn = connect()?;
+            if Board::find_by_name(&mut conn, name).is_err() {
                 bail!("board '{}' not found", name);
             }
-            Board::set_active(&conn, name, active)?;
+            Board::set_active(&mut conn, name, active)?;
             println!(
                 "Board '{}' is now {}.",
                 name,

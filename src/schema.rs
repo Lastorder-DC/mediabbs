@@ -1,4 +1,4 @@
-table! {
+diesel::table! {
     boards (id) {
         id -> Integer,
         display_name -> Varchar,
@@ -9,7 +9,7 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     comments (id) {
         id -> Integer,
         topic_id -> Integer,
@@ -23,7 +23,7 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     logs (id) {
         id -> Integer,
         log_type_id -> Integer,
@@ -35,14 +35,14 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     log_types (id) {
         id -> Integer,
         name -> Nullable<Varchar>,
     }
 }
 
-table! {
+diesel::table! {
     topics (id) {
         id -> Integer,
         board_id -> Integer,
@@ -60,14 +60,8 @@ table! {
     }
 }
 
-joinable!(comments -> topics (topic_id));
-joinable!(logs -> log_types (log_type_id));
-joinable!(topics -> boards (board_id));
+diesel::joinable!(comments -> topics (topic_id));
+diesel::joinable!(logs -> log_types (log_type_id));
+diesel::joinable!(topics -> boards (board_id));
 
-allow_tables_to_appear_in_same_query!(
-    boards,
-    comments,
-    logs,
-    log_types,
-    topics,
-);
+diesel::allow_tables_to_appear_in_same_query!(boards, comments, logs, log_types, topics,);

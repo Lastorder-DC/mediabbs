@@ -6,7 +6,6 @@ use crate::custom_error::CustomError;
 use crate::db::DbPool;
 use crate::mediawiki::MwClient;
 use crate::models::{Comment, CommentForm, Log, LogContent, LogType};
-use actix_web::error::BlockingError;
 use actix_web::{
     get, put, web,
     web::{block, Data, Path, Query},
@@ -28,9 +27,10 @@ async fn get_comment(
     pool: Data<DbPool>,
     mw: Data<MwClient>,
     UserInfo { token, .. }: UserInfo,
-    Path((comment_id,)): Path<(i32,)>,
+    comment_id: Path<i32>,
     query: Query<GetCommentQuery>,
 ) -> Result<HttpResponse, CustomError> {
+    let comment_id = comment_id.into_inner();
     let show_hidden = query.show_hidden.unwrap_or(false);
     if show_hidden {
         let profile = match token {
@@ -41,11 +41,10 @@ async fn get_comment(
             return Ok(HttpResponse::Forbidden().finish());
         }
     }
-    let conn = pool.get()?;
-    match block(move || Comment::find_by_id(&conn, comment_id)).await {
+    let mut conn = pool.get()?;
+    match block(move || Comment::find_by_id(&mut conn, comment_id)).await? {
         Ok(comment) => Ok(HttpResponse::Ok().json(comment.get_public(show_hidden))),
-        Err(BlockingError::Error(_)) => Ok(HttpResponse::NotFound().body("Topic is not found")),
-        Err(BlockingError::Canceled) => Err(BlockingError::Canceled.into()),
+        Err(_) => Ok(HttpResponse::NotFound().body("Topic is not found")),
     }
 }
 
@@ -56,7 +55,7 @@ struct PutCommentStatusRequest {
 }
 
 fn log_put_comment_status(
-    conn: &MysqlConnection,
+    conn: &mut MysqlConnection,
     comment_id: i32,
     user_id: Option<i32>,
     user_name: Option<&str>,
@@ -75,12 +74,12 @@ fn log_put_comment_status(
         _ => return Ok(()),
     };
     Log::add(
-        &conn,
+        conn,
         &log_type,
         &LogContent { target: comment_id },
         user_id,
         user_name,
-        &user_ip,
+        user_ip,
     )?;
     Ok(())
 }
@@ -90,10 +89,11 @@ async fn put_comment_status(
     pool: Data<DbPool>,
     mw: Data<MwClient>,
     UserInfo { token, .. }: UserInfo,
-    Path((comment_id,)): Path<(i32,)>,
+    comment_id: Path<i32>,
     Json(req_status): Json<PutCommentStatusRequest>,
     ConnectionInfo { ip }: ConnectionInfo,
 ) -> Result<HttpResponse, CustomError> {
+    let comment_id = comment_id.into_inner();
     #[derive(Debug, Display)]
     enum ErrorKind {
         CommentNotFound,
@@ -114,39 +114,36 @@ async fn put_comment_status(
         return Ok(HttpResponse::Forbidden().finish());
     }
 
-    let conn = pool.get()?;
+    let mut conn = pool.get()?;
 
     let res = block(move || {
-        conn.transaction::<Comment, _, _>(|| {
-            Comment::find_by_id(&conn, comment_id).map_err(|_| ErrorKind::CommentNotFound)?;
+        conn.transaction::<Comment, _, _>(|conn| {
+            Comment::find_by_id(conn, comment_id).map_err(|_| ErrorKind::CommentNotFound)?;
             let comment_changes = CommentForm {
                 id: comment_id,
                 is_hidden: req_status.is_hidden,
             };
-            let changed = comment_changes
-                .save(&conn)
-                .map_err(|e| ErrorKind::OtherError(e))?;
+            let changed = comment_changes.save(conn).map_err(ErrorKind::OtherError)?;
             log_put_comment_status(
-                &conn,
+                conn,
                 comment_id,
                 Some(profile.id),
                 Some(&profile.username),
                 &ip,
                 req_status,
             )
-            .map_err(|e| ErrorKind::OtherError(e))?;
+            .map_err(ErrorKind::OtherError)?;
             Ok(changed)
         })
     })
-    .await;
+    .await?;
 
     match res {
         Ok(comment) => Ok(HttpResponse::Ok().json(comment.get_public(true))),
-        Err(BlockingError::Error(ErrorKind::CommentNotFound)) => {
+        Err(ErrorKind::CommentNotFound) => {
             Ok(HttpResponse::NotFound().body("Comment is not found"))
         }
-        Err(BlockingError::Error(ErrorKind::OtherError(e))) => Err(e.into()),
-        Err(BlockingError::Canceled) => Err(BlockingError::Canceled.into()),
+        Err(ErrorKind::OtherError(e)) => Err(e.into()),
     }
 }
 

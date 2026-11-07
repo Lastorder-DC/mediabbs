@@ -4,9 +4,8 @@
 use crate::config::{Config, StorageConfig};
 use anyhow::{anyhow, Result};
 use nanoid::nanoid;
-use rusoto_core::Region;
-use rusoto_s3::{PutObjectRequest, S3Client, S3};
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
+use tokio::sync::OnceCell;
 
 #[derive(Serialize, Debug, PartialEq)]
 pub struct StoredFile {
@@ -18,37 +17,61 @@ pub struct StoredFile {
 
 pub struct Storage {
     config: Arc<Config>,
-    s3_region: Option<Region>,
+    s3: OnceCell<aws_sdk_s3::Client>,
 }
 
 impl Storage {
     /// Validates the storage configuration (creating the local directory if needed).
     pub fn new(config: Arc<Config>) -> Result<Self, String> {
-        let s3_region = match &config.upload.storage {
-            StorageConfig::S3 {
-                region,
-                endpoint: Some(endpoint),
-                ..
-            } => Some(Region::Custom {
-                name: region.clone(),
-                endpoint: endpoint.clone(),
-            }),
+        match &config.upload.storage {
             StorageConfig::S3 {
                 region,
                 endpoint: None,
                 ..
-            } => Some(
-                Region::from_str(region)
-                    .map_err(|_| format!("S3_REGION is not a valid AWS region: {}", region))?,
-            ),
+            } if !is_aws_region(region) => {
+                return Err(format!("S3_REGION is not a valid AWS region: {}", region))
+            }
+            StorageConfig::S3 { region, .. } if region.trim().is_empty() => {
+                return Err("S3_REGION must not be empty".into())
+            }
             StorageConfig::Local { dir } => {
                 std::fs::create_dir_all(dir)
                     .map_err(|e| format!("cannot create LOCAL_UPLOAD_DIR ({}): {}", dir, e))?;
-                None
             }
-            StorageConfig::Disabled => None,
-        };
-        Ok(Storage { config, s3_region })
+            _ => {}
+        }
+        Ok(Storage {
+            config,
+            s3: OnceCell::new(),
+        })
+    }
+
+    /// S3 client, created on first use. Credentials come from the standard AWS
+    /// chain (environment, `~/.aws/credentials`, instance/container role).
+    async fn s3_client(&self, region: &str, endpoint: Option<&str>) -> &aws_sdk_s3::Client {
+        self.s3
+            .get_or_init(|| async {
+                let shared = aws_config::defaults(aws_config::BehaviorVersion::latest())
+                    .region(aws_config::Region::new(region.to_owned()))
+                    .load()
+                    .await;
+                let mut builder = aws_sdk_s3::config::Builder::from(&shared);
+                if let Some(endpoint) = endpoint {
+                    // S3-compatible storage: path-style URLs, and only send checksums
+                    // when required (not every implementation supports the new defaults).
+                    builder = builder
+                        .endpoint_url(endpoint)
+                        .force_path_style(true)
+                        .request_checksum_calculation(
+                            aws_sdk_s3::config::RequestChecksumCalculation::WhenRequired,
+                        )
+                        .response_checksum_validation(
+                            aws_sdk_s3::config::ResponseChecksumValidation::WhenRequired,
+                        );
+                }
+                aws_sdk_s3::Client::from_conf(builder.build())
+            })
+            .await
     }
 
     pub fn local_dir(&self) -> Option<PathBuf> {
@@ -64,27 +87,36 @@ impl Storage {
         let path = match &self.config.upload.storage {
             StorageConfig::Disabled => return Err(anyhow!("uploads are disabled")),
             StorageConfig::S3 {
-                bucket, key_prefix, ..
+                region,
+                endpoint,
+                bucket,
+                key_prefix,
             } => {
                 let key = format!("{}{}", key_prefix, filename);
-                let region = self.s3_region.clone().expect("validated in Storage::new");
                 let mime = mime_guess::from_ext(ext).first_or_octet_stream();
-                S3Client::new(region)
-                    .put_object(PutObjectRequest {
-                        body: Some(bytes.into()),
-                        bucket: bucket.clone(),
-                        key: key.clone(),
-                        content_type: Some(mime.to_string()),
-                        cache_control: Some("public, max-age=31536000, immutable".to_owned()),
-                        ..Default::default()
-                    })
-                    .await?;
+                self.s3_client(region, endpoint.as_deref())
+                    .await
+                    .put_object()
+                    .bucket(bucket)
+                    .key(&key)
+                    .body(bytes.into())
+                    .content_type(mime.to_string())
+                    .cache_control("public, max-age=31536000, immutable")
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        anyhow!(
+                            "S3 upload failed: {}",
+                            aws_sdk_s3::error::DisplayErrorContext(e)
+                        )
+                    })?;
                 key
             }
             StorageConfig::Local { dir } => {
                 let target = PathBuf::from(dir).join(&filename);
                 actix_web::web::block(move || std::fs::write(target, bytes))
                     .await
+                    .map_err(|e| anyhow!("cannot write upload: {}", e))?
                     .map_err(|e| anyhow!("cannot write upload: {}", e))?;
                 filename
             }
@@ -94,6 +126,31 @@ impl Storage {
             path,
         })
     }
+}
+
+/// AWS region names: `us-east-1`, `ap-northeast-2`, `us-gov-west-1`, `cn-north-1`, ...
+fn is_aws_region(region: &str) -> bool {
+    let parts: Vec<&str> = region.split('-').collect();
+    parts.len() >= 3
+        && parts[0].len() == 2
+        && parts.iter().all(|p| {
+            !p.is_empty()
+                && p.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        })
+        && parts.last().unwrap().chars().all(|c| c.is_ascii_digit())
+        && matches!(
+            parts[parts.len() - 2],
+            "east"
+                | "west"
+                | "north"
+                | "south"
+                | "central"
+                | "northeast"
+                | "northwest"
+                | "southeast"
+                | "southwest"
+        )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -216,7 +273,7 @@ mod tests {
             ("UPLOAD_PUBLIC_URL", "https://api.example/uploads".into()),
         ]);
         let storage = Storage::new(config).unwrap();
-        let stored = actix_web::rt::System::new("test_local_save")
+        let stored = actix_web::rt::System::new()
             .block_on(async move { storage.save(PNG.to_vec(), "png").await })
             .unwrap();
         assert!(is_valid_stored_name(&stored.path));
@@ -226,6 +283,22 @@ mod tests {
         );
         assert_eq!(std::fs::read(dir.join(&stored.path)).unwrap(), PNG);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_aws_region_names() {
+        for r in [
+            "us-east-1",
+            "ap-northeast-2",
+            "us-gov-west-1",
+            "cn-north-1",
+            "eu-central-2",
+        ] {
+            assert!(is_aws_region(r), "{}", r);
+        }
+        for r in ["", "auto", "nowhere-1", "us-east", "US-EAST-1"] {
+            assert!(!is_aws_region(r), "{}", r);
+        }
     }
 
     #[test]
@@ -242,10 +315,10 @@ mod tests {
     #[test]
     #[ignore]
     fn live_s3_upload() {
-        dotenv::dotenv().ok();
+        dotenvy::dotenv().ok();
         let config = Arc::new(Config::from_env().unwrap());
         let storage = Storage::new(config).unwrap();
-        let stored = actix_web::rt::System::new("live_s3_upload")
+        let stored = actix_web::rt::System::new()
             .block_on(async move {
                 storage
                     .save(include_bytes!("../LICENSE").to_vec(), "txt")

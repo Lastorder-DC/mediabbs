@@ -23,7 +23,7 @@ MediaBBS를 실제 서비스에 설치하는 과정입니다. 순서대로 진�
 |---|---|
 | MediaWiki | Extension:OAuth의 OAuth 2.0을 쓸 수 있는 버전 (MediaWiki 1.35 이상, **1.43 LTS에서 검증**). 위키 서버 관리자 권한 |
 | 데이터베이스 | MySQL 5.7+ 또는 MariaDB 10.3+ (utf8mb4) |
-| 백엔드 실행 환경 | Linux. Docker, 또는 직접 빌드 시 Rust(stable)와 `libmysqlclient`/`libmariadb`, OpenSSL |
+| 백엔드 실행 환경 | Linux. Docker, 또는 직접 빌드 시 Rust 1.94 이상과 `libmysqlclient`/`libmariadb`, OpenSSL |
 | 클라이언트 | 정적 파일을 서빙할 웹 서버(nginx 등), Docker, 또는 GitHub Pages |
 | HTTPS | 실서비스에서는 필수 (로그인 쿠키에 `Secure`가 기본 적용됨) |
 | 업로드 저장소 (선택) | AWS S3, S3 호환 스토리지, 또는 백엔드 서버의 디스크 |

@@ -60,7 +60,7 @@ http://127.0.0.1:18090 에 접속해 `Alice` / `mediabbs-dev-user` 로 로그인
 ## 개발
 
 ```sh
-cargo build                 # libmysqlclient-dev, libssl-dev, pkg-config 필요
+cargo build                 # Rust 1.94+, libmysqlclient-dev, libssl-dev, pkg-config 필요
 cargo test --lib            # 단위 테스트 (DB가 필요한 테스트는 DATABASE_URL 설정 시 실행)
 cd dev && docker compose up -d --build && cd e2e && npm install && node oauth-e2e.js
 ```

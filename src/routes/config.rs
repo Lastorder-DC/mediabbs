@@ -112,7 +112,7 @@ async fn get_config(config: Data<Config>, mw: Data<MwClient>) -> HttpResponse {
     // Don't let browsers cache a degraded response for long.
     let max_age = if siteinfo.is_some() { 300 } else { 30 };
     HttpResponse::Ok()
-        .set_header("Cache-Control", format!("max-age={}", max_age))
+        .insert_header(("Cache-Control", format!("max-age={}", max_age)))
         .json(public)
 }
 
@@ -129,12 +129,10 @@ mod tests {
     /// Live test against a real wiki (network required):
     /// `TEST_MW_BASE_URL=https://www.mediawiki.org TEST_MW_SCRIPT_PATH=/w \
     ///  cargo test --lib live_ -- --ignored --nocapture`
-    #[test]
+    #[actix_web::test]
     #[ignore]
-    fn live_get_config() {
-        // awc runs on actix-rt 1.x (bundled with actix-web 3), not the actix-rt 2
-        // dependency, so start that runtime explicitly.
-        actix_web::rt::System::new("live_get_config").block_on(live_get_config_inner());
+    async fn live_get_config() {
+        live_get_config_inner().await;
     }
 
     async fn live_get_config_inner() {
@@ -154,7 +152,7 @@ mod tests {
             .unwrap(),
         );
         let mw = Data::new(MwClient::new(config.clone()));
-        let mut app = test::init_service(
+        let app = test::init_service(
             App::new()
                 .app_data(Data::from(config.clone()))
                 .app_data(mw.clone())
@@ -162,7 +160,7 @@ mod tests {
         )
         .await;
         let req = test::TestRequest::get().uri("/config").to_request();
-        let body: serde_json::Value = test::read_response_json(&mut app, req).await;
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
         println!("{}", serde_json::to_string_pretty(&body).unwrap());
         assert!(body["siteName"].is_string(), "siteinfo should be reachable");
         assert!(body["wiki"]["articlePath"].as_str().unwrap().contains("$1"));

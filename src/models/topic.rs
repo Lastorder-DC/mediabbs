@@ -27,7 +27,7 @@ pub struct Topic {
 }
 
 #[derive(Identifiable, AsChangeset, Debug)]
-#[table_name = "topics"]
+#[diesel(table_name = topics)]
 pub struct TopicForm {
     pub id: i32,
     pub is_closed: Option<bool>,
@@ -37,7 +37,7 @@ pub struct TopicForm {
 }
 
 impl TopicForm {
-    pub fn save(&self, conn: &MysqlConnection) -> Result<Topic> {
+    pub fn save(&self, conn: &mut MysqlConnection) -> Result<Topic> {
         let topic = self.save_changes::<Topic>(conn)?;
         Ok(topic)
     }
@@ -61,7 +61,7 @@ pub struct TopicPublic {
 }
 
 #[derive(Insertable)]
-#[table_name = "topics"]
+#[diesel(table_name = topics)]
 struct NewTopic<'a> {
     pub board_id: i32,
     pub title: &'a str,
@@ -72,7 +72,7 @@ struct NewTopic<'a> {
 
 impl Topic {
     pub fn create(
-        conn: &MysqlConnection,
+        conn: &mut MysqlConnection,
         board: &Board,
         title: &str,
         author_id: Option<i32>,
@@ -96,12 +96,12 @@ impl Topic {
         Ok(())
     }
 
-    pub fn get_latest(conn: &MysqlConnection) -> Result<Self> {
+    pub fn get_latest(conn: &mut MysqlConnection) -> Result<Self> {
         let topics = topics::table.order_by(topics::id.desc()).first(conn)?;
         Ok(topics)
     }
 
-    pub fn get_all(conn: &MysqlConnection, limit: i32, offset: i32) -> Result<Vec<Self>> {
+    pub fn get_all(conn: &mut MysqlConnection, limit: i32, offset: i32) -> Result<Vec<Self>> {
         let topics = topics::table
             .order_by(topics::updated_at.desc())
             .limit(limit.into())
@@ -110,14 +110,14 @@ impl Topic {
         Ok(topics)
     }
 
-    pub fn find_by_id(conn: &MysqlConnection, id: i32) -> Result<Self> {
+    pub fn find_by_id(conn: &mut MysqlConnection, id: i32) -> Result<Self> {
         let post = topics::table.find(id).first::<Self>(conn)?;
         Ok(post)
     }
 
     pub fn get_comments(
         &self,
-        conn: &MysqlConnection,
+        conn: &mut MysqlConnection,
         limit: i32,
         offset: i32,
     ) -> Result<Vec<Comment>> {
@@ -150,8 +150,8 @@ impl Topic {
             is_hidden: self.is_hidden,
             is_pinned: self.is_pinned,
             comment_count: self.comment_count,
-            created_at: DateTime::<Utc>::from_utc(self.created_at, Utc),
-            updated_at: DateTime::<Utc>::from_utc(self.updated_at, Utc),
+            created_at: self.created_at.and_utc(),
+            updated_at: self.updated_at.and_utc(),
         }
     }
 
@@ -177,12 +177,12 @@ mod tests {
     #[test]
     fn test_topic() {
         use std::str::FromStr;
-        let conn = create_connection();
-        conn.test_transaction::<_, diesel::result::Error, _>(|| {
-            let boards = Board::get_all(&conn).expect("A board must exist");
+        let mut conn = create_connection();
+        conn.test_transaction::<_, diesel::result::Error, _>(|conn| {
+            let boards = Board::get_all(conn).expect("A board must exist");
             let ip = IpAddr::from_str("2001:db8::1").expect("must succeed");
             Topic::create(
-                &conn,
+                conn,
                 &boards[0],
                 "test title",
                 Some(3),
@@ -190,7 +190,7 @@ mod tests {
                 &ip,
             )
             .expect("must succeed");
-            let topics = Topic::get_all(&conn, 1, 0).expect("must succeed");
+            let topics = Topic::get_all(conn, 1, 0).expect("must succeed");
             assert_eq!("test title", topics[0].title);
             assert_eq!(Some("test_author".to_owned()), topics[0].author_name);
             assert_eq!(true, topics[0].has_ipv6());
@@ -198,9 +198,8 @@ mod tests {
             assert_eq!(ip, IpAddr::from(*arr));
 
             let ip = IpAddr::from_str("127.0.0.3").expect("must succeed");
-            Topic::create(&conn, &boards[0], "test title 2", None, None, &ip)
-                .expect("must succeed");
-            let topics = Topic::get_all(&conn, 1, 0).expect("must succeed");
+            Topic::create(conn, &boards[0], "test title 2", None, None, &ip).expect("must succeed");
+            let topics = Topic::get_all(conn, 1, 0).expect("must succeed");
             assert_eq!("test title 2", topics[0].title);
             assert_eq!(None, topics[0].author_name);
             assert_eq!(false, topics[0].has_ipv6());

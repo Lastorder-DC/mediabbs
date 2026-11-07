@@ -1,9 +1,5 @@
 #[macro_use]
-extern crate serde_derive;
-#[macro_use]
-extern crate diesel;
-#[macro_use]
-extern crate diesel_migrations;
+extern crate serde;
 pub mod auth;
 pub mod cli;
 pub mod config;
@@ -20,8 +16,7 @@ use actix_web::{
     middleware::{DefaultHeaders, Logger},
     web, App, HttpServer,
 };
-use dotenv::dotenv;
-use std::{env, sync::Arc};
+use std::sync::Arc;
 
 fn exit_with_config_error(message: String) -> ! {
     eprintln!("Configuration error: {}", message);
@@ -29,11 +24,11 @@ fn exit_with_config_error(message: String) -> ! {
 }
 
 pub async fn run() -> std::io::Result<()> {
-    dotenv().ok();
-    if env::var_os("RUST_LOG").is_none() {
-        env::set_var("RUST_LOG", "actix_web=info,mediabbs=info");
-    }
-    env_logger::init();
+    dotenvy::dotenv().ok();
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("actix_web=info,mediabbs=info"),
+    )
+    .init();
 
     let config = Arc::new(config::Config::from_env().unwrap_or_else(|e| exit_with_config_error(e)));
     let jwt = web::Data::new(
@@ -46,20 +41,17 @@ pub async fn run() -> std::io::Result<()> {
     let config_data = web::Data::from(config.clone());
 
     // Sentry is optional: SENTRY_DSN (or legacy SENTRY_URL). Unset/empty disables it.
-    let _guard = sentry::init((
-        config.sentry_dsn.clone(),
-        sentry::ClientOptions {
-            auto_session_tracking: true,
-            session_mode: sentry::SessionMode::Request,
-            release: sentry::release_name!(),
-            ..Default::default()
-        },
-    ));
-    env::set_var("RUST_BACKTRACE", "1");
+    let _guard = sentry::init((config.sentry_dsn.clone(), {
+        let mut options = sentry::ClientOptions::default();
+        options.auto_session_tracking = true;
+        options.session_mode = sentry::SessionMode::Request;
+        options.release = sentry::release_name!();
+        options
+    }));
     let pool = db::create_connection_pool(&config.database_url);
     if config.migrate_on_start {
-        let conn = pool.get().expect("cannot get a database connection");
-        db::run_migrations(&conn, true).expect("failed to run migrations");
+        let mut conn = pool.get().expect("cannot get a database connection");
+        db::run_migrations(&mut conn, true).expect("failed to run migrations");
     }
 
     if config.cors_allowed_origins.is_empty() {
@@ -88,13 +80,13 @@ pub async fn run() -> std::io::Result<()> {
             .wrap(Logger::default())
             .wrap(sentry_actix::Sentry::new())
             .wrap(cors)
-            .wrap(DefaultHeaders::new().header("Access-Control-Allow-Credentials", "true"))
-            .data(pool.clone())
+            .wrap(DefaultHeaders::new().add(("Access-Control-Allow-Credentials", "true")))
+            .app_data(web::Data::new(pool.clone()))
             .app_data(config_data.clone())
             .app_data(jwt.clone())
             .app_data(mw.clone())
             .app_data(storage.clone())
-            .app_data(actix_web_validator::JsonConfig::default().limit(1024 * 1024 * 1))
+            .app_data(actix_web_validator::JsonConfig::default().limit((1024 * 1024)))
             .service(web::scope("/v1").service(routes::scope(&config)))
             .service(routes::scope(&config))
     })

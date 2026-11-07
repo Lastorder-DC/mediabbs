@@ -2,7 +2,6 @@ use crate::config::Config;
 use crate::custom_error::CustomError;
 use crate::db::DbPool;
 use crate::models::{Board, BoardPublic, TopicPublic};
-use actix_web::error::BlockingError;
 use actix_web::{
     get, web,
     web::{block, Data, Path, Query},
@@ -12,18 +11,18 @@ use derive_more::Display;
 
 #[get("")]
 async fn get_boards(pool: Data<DbPool>, config: Data<Config>) -> Result<HttpResponse, CustomError> {
-    let conn = pool.get()?;
-    let boards = block(move || Board::get_all(&conn)).await?;
+    let mut conn = pool.get()?;
+    let boards = block(move || Board::get_all(&mut conn)).await??;
     let boards = boards
         .iter()
         .map(|x| x.get_public())
         .collect::<Vec<BoardPublic>>();
 
     Ok(HttpResponse::Ok()
-        .set_header(
+        .insert_header((
             "Cache-Control",
             format!("max-age={}", config.site.boards_cache_seconds),
-        )
+        ))
         .json(boards))
 }
 
@@ -36,9 +35,10 @@ struct GetTopicsQuery {
 #[get("{board_id}/topics")]
 async fn get_board_topics(
     pool: Data<DbPool>,
-    Path((board_id,)): Path<(i32,)>,
+    board_id: Path<i32>,
     query: Query<GetTopicsQuery>,
 ) -> Result<HttpResponse, CustomError> {
+    let board_id = board_id.into_inner();
     #[derive(Debug, Display)]
     enum ErrorKind {
         BoardNotFound,
@@ -49,15 +49,15 @@ async fn get_board_topics(
     let limit = if limit > 20 { 20 } else { limit };
     let offset = query.offset.unwrap_or(0);
 
-    let conn = pool.get()?;
+    let mut conn = pool.get()?;
     let res = block(move || {
-        let board = Board::find_by_id(&conn, board_id).map_err(|_| ErrorKind::BoardNotFound)?;
+        let board = Board::find_by_id(&mut conn, board_id).map_err(|_| ErrorKind::BoardNotFound)?;
         let topics = board
-            .get_topics(&conn, limit, offset, false)
-            .map_err(|e| ErrorKind::OtherError(e))?;
+            .get_topics(&mut conn, limit, offset, false)
+            .map_err(ErrorKind::OtherError)?;
         Ok(topics)
     })
-    .await;
+    .await?;
     match res {
         Ok(topics) => {
             let topics = topics
@@ -66,11 +66,8 @@ async fn get_board_topics(
                 .collect::<Vec<TopicPublic>>();
             Ok(HttpResponse::Ok().json(topics))
         }
-        Err(BlockingError::Error(ErrorKind::BoardNotFound)) => {
-            Ok(HttpResponse::NotFound().body("Board is not found"))
-        }
-        Err(BlockingError::Error(ErrorKind::OtherError(e))) => Err(e.into()),
-        Err(BlockingError::Canceled) => Err(BlockingError::Canceled.into()),
+        Err(ErrorKind::BoardNotFound) => Ok(HttpResponse::NotFound().body("Board is not found")),
+        Err(ErrorKind::OtherError(e)) => Err(e.into()),
     }
 }
 

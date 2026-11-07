@@ -6,13 +6,13 @@ use actix_web::{
     dev,
     error::{ErrorInternalServerError, ErrorUnauthorized},
     web::Data,
-    Error, FromRequest, HttpMessage, HttpRequest,
+    Error, FromRequest, HttpRequest,
 };
 use chrono::prelude::*;
 use derive_more::{Display, Error};
-use futures::future::{err, ok, Ready};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Deserializer, Serialize};
+use std::future::{ready, Ready};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
@@ -34,8 +34,8 @@ where
 {
     let s: f64 = Deserialize::deserialize(deserializer)?;
     let timestamp = s as i64;
-    let dt = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
-    Ok(dt)
+    DateTime::<Utc>::from_timestamp(timestamp, 0)
+        .ok_or_else(|| serde::de::Error::custom("timestamp out of range"))
 }
 
 /// Extracts the numeric user id from a JWT `sub` claim.
@@ -59,7 +59,7 @@ enum DecodeError {
 /// Verifies access tokens with the wiki's OAuth 2.0 public key
 /// (`$wgOAuth2PublicKey`). Created once at startup and shared as app data.
 pub struct JwtVerifier {
-    key: DecodingKey<'static>,
+    key: DecodingKey,
     audience: String,
 }
 
@@ -73,9 +73,7 @@ impl JwtVerifier {
     }
 
     pub fn from_pem(pem: &[u8], audience: &str) -> Result<Self, String> {
-        let key = DecodingKey::from_rsa_pem(pem)
-            .map_err(|e| e.to_string())?
-            .into_static();
+        let key = DecodingKey::from_rsa_pem(pem).map_err(|e| e.to_string())?;
         Ok(JwtVerifier {
             key,
             audience: audience.to_owned(),
@@ -84,7 +82,10 @@ impl JwtVerifier {
 
     fn decode(&self, token: &str) -> Result<Claims, DecodeError> {
         let mut validation = Validation::new(Algorithm::RS256);
+        // MediaWiki uses float timestamps, which jsonwebtoken cannot parse; `exp` is
+        // checked below instead.
         validation.validate_exp = false;
+        validation.required_spec_claims.clear();
         validation.set_audience(&[&self.audience]);
         let token_data = jsonwebtoken::decode::<Claims>(token, &self.key, &validation)
             .map_err(|_| DecodeError::TokenInvalid)?;
@@ -105,34 +106,37 @@ pub struct UserInfo {
 impl FromRequest for UserInfo {
     type Error = Error;
     type Future = Ready<Result<Self, Error>>;
-    type Config = ();
 
     fn from_request(req: &HttpRequest, _payload: &mut dev::Payload) -> Self::Future {
         let token_cookie = match req.cookie("access_token") {
             Some(cookie) => cookie,
             None => {
-                return ok(Self {
+                return ready(Ok(Self {
                     id: None,
                     token: None,
-                })
+                }))
             }
         };
         let verifier = match req.app_data::<Data<JwtVerifier>>() {
             Some(v) => v,
-            None => return err(ErrorInternalServerError("JwtVerifier is not configured")),
+            None => {
+                return ready(Err(ErrorInternalServerError(
+                    "JwtVerifier is not configured",
+                )))
+            }
         };
         let token = token_cookie.value();
-        match verifier.decode(token) {
+        ready(match verifier.decode(token) {
             Ok(decoded) => match parse_user_id(&decoded.sub) {
-                Some(id) => ok(Self {
+                Some(id) => Ok(Self {
                     id: Some(id),
                     token: Some(token.to_owned()),
                 }),
-                None => err(ErrorUnauthorized("TokenInvalid")),
+                None => Err(ErrorUnauthorized("TokenInvalid")),
             },
-            Err(DecodeError::TokenExpired) => err(ErrorUnauthorized("TokenExpired")),
-            Err(DecodeError::TokenInvalid) => err(ErrorUnauthorized("TokenInvalid")),
-        }
+            Err(DecodeError::TokenExpired) => Err(ErrorUnauthorized("TokenExpired")),
+            Err(DecodeError::TokenInvalid) => Err(ErrorUnauthorized("TokenInvalid")),
+        })
     }
 }
 
@@ -143,16 +147,14 @@ pub struct RefreshToken {
 impl FromRequest for RefreshToken {
     type Error = Error;
     type Future = Ready<Result<Self, Error>>;
-    type Config = ();
 
     fn from_request(req: &HttpRequest, _payload: &mut dev::Payload) -> Self::Future {
-        if let Some(token_cookie) = req.cookie("refresh_token") {
-            ok(RefreshToken {
+        ready(match req.cookie("refresh_token") {
+            Some(token_cookie) => Ok(RefreshToken {
                 refresh_token: token_cookie.value().to_owned(),
-            })
-        } else {
-            err(ErrorUnauthorized("Token is missing"))
-        }
+            }),
+            None => Err(ErrorUnauthorized("Token is missing")),
+        })
     }
 }
 

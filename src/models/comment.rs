@@ -20,21 +20,21 @@ pub struct Comment {
 }
 
 #[derive(Identifiable, AsChangeset, Debug)]
-#[table_name = "comments"]
+#[diesel(table_name = comments)]
 pub struct CommentForm {
     pub id: i32,
     pub is_hidden: Option<bool>,
 }
 
 impl CommentForm {
-    pub fn save(&self, conn: &MysqlConnection) -> Result<Comment> {
+    pub fn save(&self, conn: &mut MysqlConnection) -> Result<Comment> {
         let comment = self.save_changes::<Comment>(conn)?;
         Ok(comment)
     }
 }
 
 #[derive(Insertable)]
-#[table_name = "comments"]
+#[diesel(table_name = comments)]
 struct NewComment<'a> {
     pub topic_id: i32,
     pub content: &'a str,
@@ -58,7 +58,7 @@ pub struct CommentPublic {
 
 impl Comment {
     pub fn create(
-        conn: &MysqlConnection,
+        conn: &mut MysqlConnection,
         topic: &Topic,
         content: &str,
         author_id: Option<i32>,
@@ -82,7 +82,7 @@ impl Comment {
         Ok(())
     }
 
-    pub fn get_all(conn: &MysqlConnection, limit: i32, offset: i32) -> Result<Vec<Self>> {
+    pub fn get_all(conn: &mut MysqlConnection, limit: i32, offset: i32) -> Result<Vec<Self>> {
         let comments = comments::table
             .order_by(comments::id.desc())
             .limit(limit.into())
@@ -91,7 +91,7 @@ impl Comment {
         Ok(comments)
     }
 
-    pub fn find_by_id(conn: &MysqlConnection, id: i32) -> Result<Self> {
+    pub fn find_by_id(conn: &mut MysqlConnection, id: i32) -> Result<Self> {
         let comment = comments::table.find(id).first::<Self>(conn)?;
         Ok(comment)
     }
@@ -116,8 +116,8 @@ impl Comment {
                 self.get_ip_string()
             },
             is_hidden: self.is_hidden,
-            created_at: DateTime::<Utc>::from_utc(self.created_at, Utc),
-            updated_at: DateTime::<Utc>::from_utc(self.updated_at, Utc),
+            created_at: self.created_at.and_utc(),
+            updated_at: self.updated_at.and_utc(),
         }
     }
 
@@ -144,12 +144,12 @@ mod tests {
     #[test]
     fn test_topic() {
         use std::str::FromStr;
-        let conn = create_connection();
-        conn.test_transaction::<_, diesel::result::Error, _>(|| {
-            let boards = Board::get_all(&conn).expect("A board must exist");
+        let mut conn = create_connection();
+        conn.test_transaction::<_, diesel::result::Error, _>(|conn| {
+            let boards = Board::get_all(conn).expect("A board must exist");
             let ip = IpAddr::from_str("2001:db8::1").expect("must succeed");
             Topic::create(
-                &conn,
+                conn,
                 &boards[0],
                 "test title",
                 Some(3),
@@ -157,9 +157,9 @@ mod tests {
                 &ip,
             )
             .expect("must succeed");
-            let topics = Topic::get_all(&conn, 1, 0).expect("must succeed");
+            let topics = Topic::get_all(conn, 1, 0).expect("must succeed");
             Comment::create(
-                &conn,
+                conn,
                 &topics[0],
                 "Test content",
                 Some(3),
@@ -167,7 +167,7 @@ mod tests {
                 &ip,
             )
             .expect("must succeed");
-            let comments = Comment::get_all(&conn, 1, 0).expect("must succeed");
+            let comments = Comment::get_all(conn, 1, 0).expect("must succeed");
             assert_eq!("Test content", comments[0].content);
             assert_eq!(Some("test_author".to_owned()), comments[0].author_name);
             assert_eq!(true, comments[0].has_ipv6());
