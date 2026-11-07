@@ -128,7 +128,7 @@
 | `SITE_NAME` | `<위키 이름> 게시판` | 화면 제목·브라우저 탭에 쓰는 게시판 사이트 이름 |
 | `SITE_LOCALE` | (자동) | 화면 기본 언어와 날짜 형식. 예: `ko-KR`, `en-US`. 비워 두면 위키의 언어, 그다음 방문자 브라우저 언어를 따릅니다. 방문자는 화면 아래에서 언어를 직접 고를 수 있습니다(현재 한국어·영어) |
 | `DEFAULT_BOARD` | 첫 활성 게시판 | `/`로 접속했을 때 보여 줄 게시판 이름 |
-| `NAV_LINKS` | (없음) | 상단 메뉴에 추가할 링크 (JSON). 아래 참고 |
+| `NAV_LINKS` | (없음) | 상단 메뉴에 추가할 링크 (JSON, 모든 스킨 공통). 아래 참고 |
 | `RECENT_CHANGES_ENABLED` | `true` | 오른쪽 "최근 바뀜 / 최근 토론" 패널 표시 |
 | `RECENT_CHANGES_NAMESPACES` | 자동 | "최근 바뀜" 탭의 이름공간 번호. 예: `0|4|10|12|14` |
 | `RECENT_DISCUSSIONS_NAMESPACES` | 자동 | "최근 토론" 탭의 이름공간 번호. 예: `1|3|5` |
@@ -145,7 +145,11 @@
 
 ### NAV_LINKS
 
-상단 메뉴의 "도구" 오른쪽에 붙는 항목입니다. JSON 배열이며 각 항목은 링크이거나 드롭다운입니다.
+스킨마다 메뉴 구성 자체를 바꾸려면 클라이언트 `config.js`의 `menus`를 쓰세요
+([mediabbs-client README](https://github.com/Lastorder-DC/mediabbs-client#상단-메뉴)).
+`NAV_LINKS`는 각 스킨 메뉴의 `navLinks` 자리(기본 메뉴는 맨 끝)에 들어갑니다.
+
+JSON 배열이며 각 항목은 링크이거나 드롭다운입니다.
 
 ```json
 [

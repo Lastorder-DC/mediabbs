@@ -50,7 +50,9 @@ async function login(browser, user, pass) {
 
   // --- Liberty: new topic through the editor modal ---
   await page.goto(BBS + "/free", { waitUntil: "networkidle" });
-  check("Liberty skin is the default", await page.isVisible(".liberty-app"));
+  check("Liberty skin (SKIN=liberty) is the default", await page.isVisible(".liberty-app"));
+  const libertyMenu = (await page.locator(".liberty-navbar .navbar-start .navbar-text").allInnerTexts()).slice(1);
+  check("Liberty menu: its default entries", JSON.stringify(libertyMenu) === JSON.stringify(["최근 바뀜", "임의 문서", "게시판", "도구"]), libertyMenu.join(","));
   await page.click(".liberty-tools .write-button");
   await page.waitForSelector(".editor-modal .toastui-editor-defaultUI");
   const title = `UI 테스트 ${Date.now()}`;
@@ -140,6 +142,14 @@ async function login(browser, user, pass) {
   ]);
   await page.waitForLoadState("networkidle");
   check("Skin switch loads the Simple skin", (await page.isVisible(".simple-app")) && !(await page.isVisible(".liberty-app")));
+  const simpleMenu = await page.locator(".s-menu > .s-menu-item, .s-menu > .s-menu-dropdown > .s-menu-trigger").allInnerTexts();
+  check("Simple menu from MENUS: boards dropdown + wiki", JSON.stringify(simpleMenu.map((x) => x.replace("▾", "").trim())) === JSON.stringify(["게시판", "위키"]), simpleMenu.join(","));
+  await page.click(".s-menu-trigger");
+  const boardLinks = await page.locator(".s-menu-panel a").allInnerTexts();
+  check("Simple boards dropdown lists the boards", boardLinks.includes("자유게시판") && boardLinks.includes("보관함"), boardLinks.join(","));
+  await page.click(".s-menu-panel >> text=보관함");
+  await page.waitForURL(BBS + "/archive");
+  check("Simple boards dropdown navigates", !(await page.isVisible(".s-menu-panel")));
   const libertyCss = await page.evaluate(() => [...document.styleSheets].some((s) => [...(s.cssRules || [])].some((r) => r.selectorText === ".liberty-navbar")));
   check("No Liberty styles in the Simple skin", !libertyCss);
   await page.goto(topicUrl, { waitUntil: "networkidle" });

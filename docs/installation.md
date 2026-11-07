@@ -343,7 +343,8 @@ yarn build                       # 결과물: dist/
 ```js
 window.MEDIABBS_CONFIG = {
   backendHost: "https://bbs.example.org/api",
-  // skin: "liberty",          // 기본 스킨 (liberty, simple)
+  // skin: "liberty",          // 기본 스킨 (simple, liberty. 기본 simple)
+  // menus: { simple: [{ type: "boards" }, { type: "wiki" }] },  // 스킨별 상단 메뉴
   // primaryColor: "#4188f1",  // 테마 색
 };
 ```
@@ -362,7 +363,7 @@ docker run -d --name mediabbs-client --restart unless-stopped \
 ```
 
 컨테이너가 시작할 때 `BACKEND_HOST`로 `config.js`를 만듭니다. 기본 스킨(`SKIN`), 고를 수 있는 스킨
-목록(`SKINS`), 테마 색(`PRIMARY_COLOR`)도 환경 변수로 줄 수 있습니다.
+목록(`SKINS`), 테마 색(`PRIMARY_COLOR`), 스킨별 상단 메뉴(`MENUS`)도 환경 변수로 줄 수 있습니다.
 
 ---
 

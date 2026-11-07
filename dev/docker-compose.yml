@@ -87,6 +87,9 @@ services:
     depends_on: [backend]
     environment:
       BACKEND_HOST: http://127.0.0.1:18081
+      # Same as the public demo: Liberty by default, a short menu for Simple.
+      SKIN: liberty
+      MENUS: '{"simple":[{"type":"boards"},{"type":"wiki"}]}'
     ports:
       - "127.0.0.1:18090:80"
 
