@@ -170,6 +170,42 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
 `Board is not active` / `You are blocked`, `403 LoginRequired` / `403 Admin only`
 (게시판의 `commentPermission`이 `users` / `admins`일 때).
 
+### `GET /search`
+
+주제 제목과 의견 내용 검색. 로그인 필요 없음.
+
+| 매개변수 | 설명 |
+|---|---|
+| `q` | 검색어 (1~100자). 띄어 쓴 단어(최대 5개)를 **모두** 포함해야 일치합니다. 대소문자 무시 |
+| `in` | `all`(기본, 제목 또는 의견 내용), `title`, `content`(의견 내용), `author`(작성자 이름 또는 비로그인 작성자의 IP와 정확히 일치) |
+| `board` | 이 게시판 ID만 |
+| `offset`, `limit` | 페이지 (`limit` 기본 20, 최대 50) |
+
+결과는 주제 단위로, 최근 활동(`updatedAt`) 순입니다. 숨긴 주제와 숨긴 의견은 나오지 않습니다.
+
+```json
+{
+  "results": [
+    {
+      "topic": { "id": 12, "boardId": 1, "title": "사과 이야기", "...": "Topic의 나머지 필드" },
+      "boardName": "free", "boardDisplayName": "자유게시판",
+      "titleMatch": true,
+      "commentMatches": 5,
+      "comments": [
+        { "id": 40, "authorName": "Alice", "createdAt": "2026-11-07T08:00:00Z", "snippet": "…빨간 사과는 맛있다…" }
+      ]
+    }
+  ],
+  "hasMore": false
+}
+```
+
+`comments`에는 일치한 의견 중 앞의 3개가 들어가고, `snippet`은 첫 일치 부분 주변의 일반 텍스트(Markdown 기호 제거)입니다.
+오류: `400 Empty search`, `400 Search is too long`, `400` (모르는 `in` 값).
+
+검색은 `LIKE '%단어%'`로 표를 훑습니다. MariaDB의 FULLTEXT는 띄어쓰기로만 단어를 나눠 한국어에 맞지 않기
+때문입니다. 게시판 규모(수십만 의견 정도)에서는 충분하지만, 아주 큰 DB에서는 느려질 수 있습니다.
+
 ## 관리 (관리자만)
 
 관리자가 아니면 `403`, 비로그인이면 `401 TokenMissing`.

@@ -3,7 +3,7 @@
   "private": true,
   "description": "End-to-end tests for the mediabbs dev stack",
   "scripts": {
-    "test": "node oauth-e2e.js && node ui-e2e.js && node admin-e2e.js"
+    "test": "node oauth-e2e.js && node ui-e2e.js && node admin-e2e.js && node search-e2e.js"
   },
   "dependencies": {
     "playwright": "^1.50.0"

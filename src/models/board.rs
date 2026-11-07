@@ -223,7 +223,7 @@ impl Board {
     /// letters, digits, `-` and `_`, not starting with a digit or symbol, and not a
     /// reserved client route.
     pub fn is_valid_name(name: &str) -> bool {
-        const RESERVED: &[&str] = &["auth", "admin", "api", "uploads", "config"];
+        const RESERVED: &[&str] = &["auth", "admin", "api", "uploads", "config", "search"];
         let first_ok = name
             .chars()
             .next()
@@ -310,6 +310,7 @@ mod tests {
         assert!(!Board::is_valid_name("위키방"));
         assert!(!Board::is_valid_name("a/b"));
         assert!(!Board::is_valid_name("auth"));
+        assert!(!Board::is_valid_name("search"));
     }
 
     #[test]

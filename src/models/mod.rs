@@ -2,6 +2,7 @@ mod board;
 mod comment;
 mod log;
 pub mod menu;
+pub mod search;
 mod site_setting;
 mod topic;
 pub use self::log::{Log, LogContent, LogEntry, LogType};

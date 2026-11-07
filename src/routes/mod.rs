@@ -5,6 +5,7 @@ mod comments;
 mod config;
 mod files;
 mod me;
+mod search;
 mod topics;
 
 use crate::config::{Config, StorageConfig};
@@ -25,7 +26,8 @@ pub fn scope(config: &Config) -> Scope {
         .service(files::scope(config))
         .service(boards::scope())
         .service(topics::scope())
-        .service(comments::scope());
+        .service(comments::scope())
+        .service(search::scope());
     if let StorageConfig::Local { .. } = config.upload.storage {
         scope.service(files::uploads_scope())
     } else {

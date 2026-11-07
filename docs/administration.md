@@ -98,7 +98,7 @@ mediabbs board list
 ```
 
 - **이름**은 주소에 쓰입니다(`https://bbs.example.org/free`). 소문자 영문으로 시작하고 소문자·숫자·`-`·`_`만
-  쓸 수 있으며, 클라이언트 경로와 겹치는 `auth`, `admin`, `api`, `uploads`, `config`는 쓸 수 없습니다.
+  쓸 수 있으며, 클라이언트 경로와 겹치는 `auth`, `admin`, `api`, `uploads`, `config`, `search`는 쓸 수 없습니다.
   `board set-name`으로 바꿀 수 있지만 기존 주소가 열리지 않게 됩니다.
 - **표시 이름**은 화면에 보이는 이름이며 언제든 `board rename`으로 바꿀 수 있습니다.
 - 상단 메뉴의 게시판 목록은 게시판 설정(순서, 메뉴 표시, 아이콘, 구분선)대로 자동으로 만들어집니다.
