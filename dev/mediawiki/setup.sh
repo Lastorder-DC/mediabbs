@@ -11,24 +11,26 @@ WIKI_LANG=${WIKI_LANG:-ko}
 BBS_CALLBACK=${BBS_CALLBACK:-http://127.0.0.1:18090/auth}
 ADMIN_PASSWORD=${ADMIN_PASSWORD:-mediabbs-dev-admin}
 USER_PASSWORD=${USER_PASSWORD:-mediabbs-dev-user}
+WIKI_NAME=${WIKI_NAME:-MediaBBS Dev Wiki}
 
 cd /var/www/html
 mkdir -p "$DATA" "$SHARED"
 
 # LocalSettings.php lives in the data volume; a stub includes it (a symlink is
 # not followed by www-data under fs.protected_symlinks on some hosts).
+# Extra settings can be mounted as /var/www/conf.d/*.php (loaded afterwards).
 link_settings() {
     rm -f LocalSettings.php
-    printf '<?php\nrequire "%s/LocalSettings.php";\n' "$DATA" > LocalSettings.php
+    printf '<?php\nrequire "%s/LocalSettings.php";\nforeach ( glob( "/var/www/conf.d/*.php" ) ?: [] as $f ) { require $f; }\n' "$DATA" > LocalSettings.php
 }
 
 if [ ! -f "$DATA/LocalSettings.php" ]; then
-    echo "== Installing MediaWiki ($WIKI_SERVER, lang=$WIKI_LANG)"
+    echo "== Installing MediaWiki \"$WIKI_NAME\" ($WIKI_SERVER, lang=$WIKI_LANG)"
     php maintenance/install.php \
         --dbtype sqlite --dbpath "$DATA" --dbname wiki \
         --server "$WIKI_SERVER" --scriptpath "" --lang "$WIKI_LANG" \
         --pass "$ADMIN_PASSWORD" --confpath "$DATA" \
-        "MediaBBS Dev Wiki" Admin
+        "$WIKI_NAME" Admin
 
     echo "== Generating OAuth 2.0 key pair"
     openssl genrsa -out "$DATA/oauth2.key" 2048 2>/dev/null

@@ -53,6 +53,11 @@ created automatically.
 
 The same steps apply to a real wiki; see the installation guide.
 
+Container environment (first-start values): `WIKI_SERVER`, `WIKI_NAME`, `WIKI_LANG`,
+`BBS_CALLBACK`, `ADMIN_PASSWORD`, `USER_PASSWORD`, `OAUTH2_ACCESS_TOKEN_TTL`.
+Extra PHP settings can be mounted as `/var/www/conf.d/*.php`; they are loaded after
+`LocalSettings.php` on every request (restart the container to bypass opcache).
+
 ## End-to-end test
 
 ```sh
