@@ -86,7 +86,7 @@ pub async fn run() -> std::io::Result<()> {
             .app_data(jwt.clone())
             .app_data(mw.clone())
             .app_data(storage.clone())
-            .app_data(actix_web_validator::JsonConfig::default().limit((1024 * 1024)))
+            .app_data(actix_web_validator::JsonConfig::default().limit(1024 * 1024))
             .service(web::scope("/v1").service(routes::scope(&config)))
             .service(routes::scope(&config))
     })
