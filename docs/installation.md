@@ -431,9 +431,9 @@ server {
 
 ### HTTPS 강제 (HSTS)
 
-HTTPS로만 운영한다면 nginx의 `server` 블록에 HSTS를 넣어 브라우저가 HTTP로 접속하지 않게 하세요.
-브라우저가 이 값을 `max-age` 동안 기억하므로, 같은 도메인의 다른 사이트가 HTTP를 쓴다면 `includeSubDomains`는
-붙이지 마세요.
+게시판은 HTTPS로 운영하고(로그인 쿠키의 `Secure`가 기본으로 켜져 있습니다), nginx의 `server` 블록에 HSTS를
+넣어 브라우저가 HTTP로 접속하지 않게 하세요. 브라우저가 이 값을 `max-age` 동안 기억하므로, 같은 도메인 아래에
+HTTP로 남겨야 하는 곳(apt 미러 등)이 있다면 `includeSubDomains`는 붙이지 마세요.
 
 ```nginx
 add_header Strict-Transport-Security "max-age=31536000" always;
