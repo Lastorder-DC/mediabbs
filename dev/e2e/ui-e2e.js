@@ -101,9 +101,12 @@ async function login(browser, user, pass) {
   }
   await page.goto(BBS + "/free", { waitUntil: "networkidle" });
   const firstPage = await page.locator(".topic-card").count();
-  for (let i = 0; i < 10 && (await page.locator(".topic-card").count()) < total; i++) {
+  for (let i = 0, last = -1, still = 0; still < 5 && (await page.locator(".topic-card").count()) < total; i++) {
     await page.mouse.wheel(0, 5000);
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(300);
+    const n = await page.locator(".topic-card").count();
+    still = n === last ? still + 1 : 0;
+    last = n;
   }
   const loaded = await page.locator(".topic-card").count();
   check("Infinite scroll loads every topic", all === 20 && firstPage < total && loaded === total, `first ${firstPage}, loaded ${loaded}/${total}`);
@@ -117,7 +120,8 @@ async function login(browser, user, pass) {
   const t1 = await api(admin.page, "GET", `/topics/${topicId}`);
   check("Admin menu pins the topic", t1.json.isPinned === true);
   await admin.page.click(".admin-tools .dropdown-trigger button");
-  check("Admin menu now offers unpin", await admin.page.isVisible(".admin-tools >> text=상단 고정 해제"));
+  const unpin = await admin.page.waitForSelector(".admin-tools >> text=상단 고정 해제", { state: "visible", timeout: 5000 }).then(() => true, () => false);
+  check("Admin menu now offers unpin", unpin);
   await admin.page.keyboard.press("Escape");
 
   // --- language switch ---
