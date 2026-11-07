@@ -113,6 +113,20 @@ async function login(browser, user, pass) {
   const loaded = await page.locator(".topic-card").count();
   check("Infinite scroll loads every topic", all === 20 && firstPage < total && loaded === total, `first ${firstPage}, loaded ${loaded}/${total}`);
 
+  // --- switching boards through the menu must not duplicate topics ---
+  let libertyDup = 0;
+  for (let i = 0; i < 2; i++) {
+    for (const name of ["archive", "free"]) {
+      await page.click(".liberty-navbar .dropdown-trigger >> text=게시판");
+      await page.click(`.liberty-navbar a[href="/${name}"]`);
+      await page.waitForURL(`${BBS}/${name}`);
+      await page.waitForLoadState("networkidle");
+      const ids = await page.locator("a.topic-card").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
+      libertyDup += ids.length - new Set(ids).size;
+    }
+  }
+  check("Liberty: switching boards via the menu shows no duplicates", libertyDup === 0, `${libertyDup} duplicates`);
+
   // --- moderation menu (admin) ---
   const admin = await login(browser, "Admin", "mediabbs-dev-admin");
   await admin.page.goto(topicUrl, { waitUntil: "networkidle" });
@@ -150,6 +164,12 @@ async function login(browser, user, pass) {
   await page.click(".s-menu-panel >> text=보관함");
   await page.waitForURL(BBS + "/archive");
   check("Simple boards dropdown navigates", !(await page.isVisible(".s-menu-panel")));
+  await page.click(".s-menu-trigger");
+  await page.click('.s-menu-panel a[href="/free"]');
+  await page.waitForURL(BBS + "/free");
+  await page.waitForLoadState("networkidle");
+  const simpleIds = await page.locator("a.s-topic-title").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
+  check("Simple: switching boards via the menu shows no duplicates", simpleIds.length > 0 && simpleIds.length === new Set(simpleIds).size, `${simpleIds.length} shown`);
   const libertyCss = await page.evaluate(() => [...document.styleSheets].some((s) => [...(s.cssRules || [])].some((r) => r.selectorText === ".liberty-navbar")));
   check("No Liberty styles in the Simple skin", !libertyCss);
   await page.goto(topicUrl, { waitUntil: "networkidle" });
