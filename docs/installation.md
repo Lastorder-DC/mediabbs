@@ -429,6 +429,16 @@ server {
 - 클라이언트: `backendHost: "https://bbs-api.example.org"`
 - 위키의 OAuth 콜백 URL은 여전히 **클라이언트** 주소(`https://bbs.example.org/auth`)입니다.
 
+### HTTPS 강제 (HSTS)
+
+HTTPS로만 운영한다면 nginx의 `server` 블록에 HSTS를 넣어 브라우저가 HTTP로 접속하지 않게 하세요.
+브라우저가 이 값을 `max-age` 동안 기억하므로, 같은 도메인의 다른 사이트가 HTTP를 쓴다면 `includeSubDomains`는
+붙이지 마세요.
+
+```nginx
+add_header Strict-Transport-Security "max-age=31536000" always;
+```
+
 ### 실시간 의견 갱신 (SSE)
 
 주제 화면은 `GET /topics/{id}/events`(Server-Sent Events)로 새 의견, 의견 숨김, 주제 상태 변경을 바로
