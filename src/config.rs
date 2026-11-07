@@ -129,7 +129,9 @@ pub enum StorageConfig {
 pub struct SiteConfig {
     /// `None` = derive from the wiki's sitename.
     pub name: Option<String>,
-    pub locale: String,
+    /// UI language/date locale (`SITE_LOCALE`); `None` lets the client pick
+    /// (wiki language, then the browser).
+    pub locale: Option<String>,
     /// `None` = first active board.
     pub default_board: Option<String>,
     /// Extra navigation links for the client, as a JSON array (passed through).
@@ -374,7 +376,7 @@ impl Config {
         };
         let site = SiteConfig {
             name: get("SITE_NAME"),
-            locale: get("SITE_LOCALE").unwrap_or_else(|| "ko-KR".into()),
+            locale: get("SITE_LOCALE"),
             default_board: get("DEFAULT_BOARD"),
             nav_links,
             recent_changes_enabled: bool_or("RECENT_CHANGES_ENABLED", true)?,

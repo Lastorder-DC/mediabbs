@@ -10,7 +10,7 @@ use actix_web::{get, web, web::Data, HttpResponse, Scope};
 struct PublicConfig<'a> {
     /// Board name shown in the UI. `null` when neither SITE_NAME nor siteinfo is available.
     site_name: Option<String>,
-    locale: &'a str,
+    locale: Option<&'a str>,
     default_board: Option<&'a str>,
     wiki: PublicWikiConfig,
     oauth: PublicOauthConfig<'a>,
@@ -72,7 +72,7 @@ async fn get_config(config: Data<Config>, mw: Data<MwClient>) -> HttpResponse {
             .name
             .clone()
             .or_else(|| siteinfo.as_ref().map(|i| i.site_name.clone())),
-        locale: &site.locale,
+        locale: site.locale.as_deref(),
         default_board: site.default_board.as_deref(),
         wiki: PublicWikiConfig {
             base_url: config.mw.base_url.clone(),

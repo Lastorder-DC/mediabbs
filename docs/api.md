@@ -83,6 +83,7 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
 ```
 
 `siteName`과 `wiki.*` 중 위키에서 가져오는 값은 위키에 접속하지 못하면 `null`일 수 있습니다.
+`locale`은 `SITE_LOCALE`을 설정하지 않았으면 `null`입니다.
 
 ### `GET /me`
 

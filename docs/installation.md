@@ -334,15 +334,17 @@ OAuth 정보, 메뉴 등)은 백엔드의 `GET /config`에서 받아 옵니다.
 ```sh
 git clone https://github.com/Lastorder-DC/mediabbs-client.git
 cd mediabbs-client
-yarn install
+yarn install                     # Node.js 20.19 이상
 yarn build                       # 결과물: dist/
 ```
 
-`dist/config.js`에 백엔드 주소를 적습니다.
+`dist/config.js`에 백엔드 주소를 적습니다. 기본 스킨과 테마 색도 여기서 정할 수 있습니다.
 
 ```js
 window.MEDIABBS_CONFIG = {
   backendHost: "https://bbs.example.org/api",
+  // skin: "liberty",          // 기본 스킨 (liberty, simple)
+  // primaryColor: "#4188f1",  // 테마 색
 };
 ```
 
@@ -359,7 +361,8 @@ docker run -d --name mediabbs-client --restart unless-stopped \
   mediabbs-client
 ```
 
-컨테이너가 시작할 때 `BACKEND_HOST`로 `config.js`를 만듭니다.
+컨테이너가 시작할 때 `BACKEND_HOST`로 `config.js`를 만듭니다. 기본 스킨(`SKIN`), 고를 수 있는 스킨
+목록(`SKINS`), 테마 색(`PRIMARY_COLOR`)도 환경 변수로 줄 수 있습니다.
 
 ---
 
@@ -388,7 +391,7 @@ server {
     location = /config.js         { add_header Cache-Control "no-cache"; }
     location = /index.html        { add_header Cache-Control "no-cache"; }
     location = /service-worker.js { add_header Cache-Control "no-cache"; }
-    location ~ ^/(js|css|img|fonts)/ {
+    location /assets/ {
         add_header Cache-Control "public, max-age=31536000, immutable";
     }
     location / {

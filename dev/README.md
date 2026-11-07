@@ -65,11 +65,14 @@ cd dev/e2e
 npm install
 npx playwright install chromium-headless-shell
 node oauth-e2e.js
+node ui-e2e.js
 ```
 
-It logs in through the wiki as each test user (including the consent screen)
-and checks moderation, blocks, uploads, token refresh, logout, anonymous
-posting and disabled boards.
+`oauth-e2e.js` logs in through the wiki as each test user (including the
+consent screen) and checks moderation, blocks, uploads, token refresh, logout,
+anonymous posting and disabled boards. `ui-e2e.js` drives the client: editor
+modals, quoting, the moderation menu, infinite scroll, error messages, the
+language switch and both skins (Liberty, Simple).
 
 ### More manual checks
 
