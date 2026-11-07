@@ -72,3 +72,4 @@
   바로 확인하려면 강력 새로 고침(Ctrl+Shift+R)을 하세요. 웹 서버가 `index.html`, `service-worker.js`,
   `config.js`를 `Cache-Control: no-cache`로 보내는지 확인하세요.
 - **게시판을 새로 만들었는데 메뉴에 없음**: 게시판 목록은 최대 `BOARDS_CACHE_SECONDS`(기본 5분) 캐시됩니다.
+  관리 페이지에서 "메뉴에 표시"가 켜져 있는지도 확인하세요.

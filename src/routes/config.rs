@@ -2,8 +2,10 @@
 //! build does not need to know anything about the wiki it is attached to.
 
 use crate::config::Config;
+use crate::db::DbPool;
 use crate::mediawiki::MwClient;
-use actix_web::{get, web, web::Data, HttpResponse, Scope};
+use crate::models::SiteSetting;
+use actix_web::{get, web, web::block, web::Data, HttpResponse, Scope};
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -18,6 +20,8 @@ struct PublicConfig<'a> {
     recent_changes: PublicRecentChanges,
     site_notice: PublicSiteNotice<'a>,
     upload: PublicUpload<'a>,
+    /// Menus saved from the admin UI (`null`: config.js / skin defaults apply).
+    menus: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Debug)]
@@ -64,8 +68,16 @@ struct PublicSiteNotice<'a> {
 }
 
 #[get("")]
-async fn get_config(config: Data<Config>, mw: Data<MwClient>) -> HttpResponse {
+async fn get_config(
+    config: Data<Config>,
+    mw: Data<MwClient>,
+    pool: Option<Data<DbPool>>,
+) -> HttpResponse {
     let siteinfo = mw.siteinfo().await;
+    let menus = match pool {
+        Some(pool) => load_menus(pool).await,
+        None => None,
+    };
     let site = &config.site;
     let public = PublicConfig {
         site_name: site
@@ -108,12 +120,36 @@ async fn get_config(config: Data<Config>, mw: Data<MwClient>) -> HttpResponse {
             max_bytes: config.upload.max_bytes,
             allowed_extensions: &config.upload.allowed_extensions,
         },
+        menus,
     };
     // Don't let browsers cache a degraded response for long.
     let max_age = if siteinfo.is_some() { 300 } else { 30 };
     HttpResponse::Ok()
         .insert_header(("Cache-Control", format!("max-age={}", max_age)))
         .json(public)
+}
+
+/// Stored menus; `None` when unset or unreadable (logged).
+async fn load_menus(pool: Data<DbPool>) -> Option<serde_json::Value> {
+    let res = block(move || -> anyhow::Result<Option<serde_json::Value>> {
+        let mut conn = pool.get()?;
+        match SiteSetting::get(&mut conn, SiteSetting::MENUS)? {
+            Some(json) => Ok(Some(serde_json::from_str(&json)?)),
+            None => Ok(None),
+        }
+    })
+    .await;
+    match res {
+        Ok(Ok(menus)) => menus,
+        Ok(Err(e)) => {
+            log::error!("cannot load menus: {}", e);
+            None
+        }
+        Err(e) => {
+            log::error!("cannot load menus: {}", e);
+            None
+        }
+    }
 }
 
 pub fn scope() -> Scope {

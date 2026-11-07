@@ -8,11 +8,20 @@
 ```text
 mediabbs [serve]                          서버 실행 (기본)
 mediabbs migrate                          DB 마이그레이션 적용
-mediabbs board list                       게시판 목록
+mediabbs board list                       게시판 목록 (메뉴 순서)
 mediabbs board add <이름> <표시 이름>     게시판 만들기
 mediabbs board rename <이름> <표시 이름>  표시 이름 바꾸기
-mediabbs board disable <이름>             게시판을 읽기 전용으로
+mediabbs board set-name <이름> <새 이름>  이름(주소) 바꾸기
+mediabbs board disable <이름>             게시판을 읽기 전용(보관)으로
 mediabbs board enable <이름>              다시 쓰기 가능하게
+mediabbs board hide <이름>                메뉴에서 빼기 (주소로는 계속 접근 가능)
+mediabbs board show <이름>                메뉴에 다시 표시
+mediabbs board icon <이름> <아이콘|->     Bootstrap Icons 아이콘 (-는 없애기)
+mediabbs board separator <이름> on|off    메뉴에서 이 게시판 위에 구분선
+mediabbs board move <이름> <위치>         메뉴 순서 바꾸기 (1 = 맨 위)
+mediabbs board permission <이름> write|comment all|users|admins
+                                          새 주제 / 의견을 쓸 수 있는 사람
+mediabbs board delete <이름>              주제가 없는 게시판 삭제
 mediabbs help | version
 ```
 
@@ -25,23 +34,71 @@ docker exec mediabbs mediabbs board list        # 실행 중인 컨테이너에�
 
 ## 게시판 관리
 
+게시판은 **웹 관리 페이지**나 명령줄로 관리합니다. 둘은 같은 설정을 바꿉니다.
+
+### 관리 페이지
+
+게시판 관리자(`ADMIN_GROUPS` / `ADMIN_RIGHTS`)로 로그인하면 사용자 메뉴(Liberty)나 상단의
+사용자 이름 옆(Simple)에 **게시판 관리** 링크가 생깁니다(`https://bbs.example.org/admin`).
+
+**게시판** 탭
+
+- 목록: 메뉴 순서대로 보입니다. 끌어 놓거나 ↑↓ 버튼으로 순서를 바꾼 뒤 **순서 저장**을 누릅니다.
+- ⚙ 버튼이나 **새 게시판**으로 아래 설정을 바꿉니다.
+
+| 설정 | 설명 |
+|---|---|
+| 표시 이름 | 화면에 보이는 이름 |
+| 이름 (주소) | `https://bbs.example.org/<이름>`. 바꾸면 기존 게시판·글 주소가 열리지 않습니다 |
+| 아이콘 | 메뉴와 게시판 제목에서 이름 왼쪽에 보일 [Bootstrap Icons](https://icons.getbootstrap.com/) 이름(예: `megaphone`, `chat-dots`). 입력하면 미리 보기가 나옵니다 |
+| 글 작성 / 의견 작성 | 새 주제 / 의견을 쓸 수 있는 사람: 누구나(비로그인 포함), 로그인 사용자, 관리자만 |
+| 메뉴에 표시 | 끄면 메뉴의 게시판 목록에서 빠집니다. 주소로는 계속 들어갈 수 있습니다 |
+| 위에 구분선 | 메뉴의 게시판 목록에서 이 게시판 위에 구분선을 넣습니다(게시판 묶음 나누기) |
+| 보관 (읽기 전용) | 새 주제와 의견을 쓸 수 없게 합니다 |
+
+- **삭제**는 주제가 하나도 없는 게시판만 됩니다. 쓰던 게시판은 보관하거나 메뉴에서 빼세요.
+
+예: 공지 게시판은 "글 작성: 관리자만, 의견 작성: 로그인 사용자", 맨 위로 옮기고 아이콘 `megaphone`.
+그 아래 일반 게시판 묶음은 첫 게시판에 "위에 구분선"을 켭니다.
+
+**메뉴** 탭
+
+상단 메뉴의 항목과 순서를 스킨별로 정합니다.
+
+- 스킨을 고르면 지금 쓰이는 메뉴와 그 출처(저장된 메뉴 / `config.js` / 스킨 기본값)가 보입니다.
+- 항목을 ↑↓로 옮기고, ✕로 빼고, 기본 항목(최근 바뀜, 임의 문서, 게시판 목록, 도구, 위키 대문,
+  `NAV_LINKS`)이나 링크·드롭다운을 추가합니다. 기본 항목의 이름은 비워 두면 번역된 기본 이름을 씁니다.
+- **기본 (모든 스킨)** 메뉴를 저장하면 자기 메뉴가 없는 모든 스킨에 쓰입니다.
+- 언어별 이름 같은 고급 설정은 **JSON으로 편집**에서 합니다(형식은 클라이언트 `config.js`의 `menus`와 같음).
+- **저장된 메뉴 지우기**를 하고 저장하면 `config.js` 또는 스킨 기본 메뉴로 돌아갑니다.
+
+우선순위: 관리 페이지에 저장한 스킨 메뉴 → 저장한 기본 메뉴 → `config.js`의 `menus` → 스킨 기본 메뉴.
+
+설정과 게시판 목록은 브라우저에 캐시되므로 다른 사용자에게는 최대 5분(`BOARDS_CACHE_SECONDS`) 뒤에
+반영됩니다. 바꾼 관리자 본인의 브라우저에는 바로 반영됩니다.
+
+### 명령줄
+
 ```sh
 mediabbs board add free 자유게시판
 mediabbs board add notice 공지사항
+mediabbs board permission notice write admins
+mediabbs board icon notice megaphone
+mediabbs board move notice 1
+mediabbs board separator free on
 mediabbs board list
-#    1  free                 자유게시판
-#    2  notice               공지사항
+#    2  notice               공지사항  (icon=megaphone, write=admins)
+#    1  free                 자유게시판  (separator)
 ```
 
 - **이름**은 주소에 쓰입니다(`https://bbs.example.org/free`). 소문자 영문으로 시작하고 소문자·숫자·`-`·`_`만
   쓸 수 있으며, 클라이언트 경로와 겹치는 `auth`, `admin`, `api`, `uploads`, `config`는 쓸 수 없습니다.
-  만든 뒤에는 바꿀 수 없습니다(주소가 바뀌므로).
+  `board set-name`으로 바꿀 수 있지만 기존 주소가 열리지 않게 됩니다.
 - **표시 이름**은 화면에 보이는 이름이며 언제든 `board rename`으로 바꿀 수 있습니다.
-- 상단 메뉴의 게시판 목록은 자동으로 만들어집니다. 게시판 목록은 브라우저에 최대
-  `BOARDS_CACHE_SECONDS`(기본 5분) 동안 캐시됩니다.
-- 게시판을 삭제하는 명령은 없습니다. 더 쓰지 않는 게시판은 `board disable`로 **보관** 상태로 두세요.
-  보관된 게시판은 읽을 수 있지만 새 주제와 의견을 쓸 수 없습니다.
-- `/`로 접속했을 때 보여 줄 게시판은 `DEFAULT_BOARD`로 정합니다(기본: 첫 번째 활성 게시판).
+- 상단 메뉴의 게시판 목록은 게시판 설정(순서, 메뉴 표시, 아이콘, 구분선)대로 자동으로 만들어집니다.
+- 더 쓰지 않는 게시판은 `board disable`로 **보관** 상태로 두세요. 보관된 게시판은 읽을 수 있지만
+  새 주제와 의견을 쓸 수 없습니다. `board delete`는 주제가 없는 게시판만 지웁니다.
+- `/`로 접속했을 때 보여 줄 게시판은 `DEFAULT_BOARD`로 정합니다(기본: 메뉴에 보이는 첫 번째 활성 게시판).
 
 ## 관리자 기능
 
@@ -58,7 +115,7 @@ mediabbs board list
 | 내용 보기 | 숨긴 의견 | 관리자만 원래 내용 확인 |
 | 사용자 차단 | 의견 작성자 | 위키의 `Special:Block`으로 이동 (차단은 위키에서) |
 
-관리 동작은 DB의 `logs` 테이블에 기록됩니다(누가, 언제, 어떤 동작, 대상 ID, IP). 아직 화면은 없으므로
+관리 동작(게시판·메뉴 관리 포함)은 DB의 `logs` 테이블에 기록됩니다(누가, 언제, 어떤 동작, 대상 ID, IP). 아직 화면은 없으므로
 필요하면 직접 조회하세요.
 
 ```sql

@@ -1,3 +1,4 @@
+mod admin;
 mod auth;
 mod boards;
 mod comments;
@@ -18,6 +19,7 @@ pub fn scope(config: &Config) -> Scope {
     let scope = web::scope("")
         .service(get)
         .service(auth::scope())
+        .service(admin::scope())
         .service(config::scope())
         .service(me::scope())
         .service(files::scope(config))

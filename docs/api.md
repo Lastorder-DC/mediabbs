@@ -78,10 +78,12 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
     "requireLogin": true,
     "maxBytes": 10485760,
     "allowedExtensions": ["png", "jpg", "jpeg", "gif", "webp"]
-  }
+  },
+  "menus": null
 }
 ```
 
+`menus`는 관리 페이지에서 저장한 스킨별 메뉴입니다(없으면 `null`, 형식은 `PUT /admin/menus` 참고).
 `siteName`과 `wiki.*` 중 위키에서 가져오는 값은 위키에 접속하지 못하면 `null`일 수 있습니다.
 `locale`은 `SITE_LOCALE`을 설정하지 않았으면 `null`입니다.
 
@@ -111,7 +113,8 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
 ```jsonc
 // Board
 { "id": 1, "name": "free", "displayName": "자유게시판", "isActive": true,
-  "createdAt": "…", "updatedAt": "…" }
+  "sortOrder": 1, "icon": "chat-dots", "writePermission": "all", "commentPermission": "all",
+  "isListed": true, "separatorBefore": false, "createdAt": "…", "updatedAt": "…" }
 
 // Topic
 { "id": 10, "boardId": 1, "title": "제목", "authorId": 3, "authorName": "Alice",
@@ -123,12 +126,22 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
   "isHidden": false, "createdAt": "…", "updatedAt": "…" }
 ```
 
+게시판 필드:
+
+- `isActive`: `false`면 보관됨(읽기 전용).
+- `icon`: 메뉴와 제목에서 이름 왼쪽에 보이는 [Bootstrap Icons](https://icons.getbootstrap.com/) 이름(`bi-` 없이). 없으면 `null`.
+- `writePermission` / `commentPermission`: 새 주제 / 의견을 쓸 수 있는 사람. `all`(비로그인 포함 누구나),
+  `users`(로그인 사용자), `admins`(게시판 관리자).
+- `isListed`: 메뉴의 게시판 목록에 보일지. `false`여도 주소로는 들어갈 수 있습니다.
+- `separatorBefore`: 메뉴의 게시판 목록에서 이 게시판 위에 구분선을 넣을지.
+- `GET /boards`는 메뉴 순서(`sortOrder`)대로 줍니다.
+
 비로그인 작성자는 `authorId`가 `null`이고 `authorName`이 IP 주소입니다.
 주제의 첫 의견이 본문입니다.
 
 | 메서드·경로 | 설명 | 응답 |
 |---|---|---|
-| `GET /boards` | 게시판 목록 (`isActive=false`는 보관됨) | `Board[]` |
+| `GET /boards` | 게시판 목록, 메뉴 순서대로 (`isListed=false` 포함) | `Board[]` |
 | `GET /boards/{boardId}/topics?offset=&limit=` | 주제 목록. 상단 고정 → 최근 갱신 순, 숨긴 주제 제외. `limit` 기본 10, 최대 20 | `Topic[]`, `404` |
 | `GET /topics/{topicId}` | 주제 하나 | `Topic`, `403 Topic is hidden`, `404` |
 | `GET /topics/{topicId}/comments?offset=&limit=` | 의견 목록, 작성순. `limit` 기본 10, 최대 20 | `Comment[]` |
@@ -144,7 +157,8 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
 { "boardId": 1, "title": "제목 (1~100자)", "content": "첫 의견 본문, 마크다운 (1~100000자)" }
 ```
 
-오류: `404 Board is not found`, `403 Board is not active`, `403 You are blocked`, `400` (검증 실패).
+오류: `404 Board is not found`, `403 Board is not active`, `403 You are blocked`, `400` (검증 실패),
+`403 LoginRequired` / `403 Admin only` (게시판의 `writePermission`이 `users` / `admins`일 때).
 
 ### `POST /topics/{topicId}/comments`
 
@@ -153,7 +167,8 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
 ```
 
 오류: `404`, `403 Topic is hidden` / `Topic is closed` / `Topic is suspended` /
-`Board is not active` / `You are blocked`.
+`Board is not active` / `You are blocked`, `403 LoginRequired` / `403 Admin only`
+(게시판의 `commentPermission`이 `users` / `admins`일 때).
 
 ## 관리 (관리자만)
 
@@ -176,6 +191,56 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
 ```
 
 응답: 바뀐 `Comment` (관리자에게는 숨긴 내용도 포함).
+
+### 게시판 관리
+
+클라이언트의 관리 페이지(`/admin`)가 쓰는 API입니다. 바꾼 내용은 모두 `logs`에 기록됩니다.
+관리자가 아니면 `403 Admin only`.
+
+| 메서드·경로 | 설명 | 응답 |
+|---|---|---|
+| `POST /admin/boards` | 게시판 만들기 (메뉴 맨 끝에 추가) | `Board`, `409 Board name is taken` |
+| `PUT /admin/boards/{boardId}` | 게시판 설정 바꾸기 | `Board`, `404`, `409 Board name is taken` |
+| `DELETE /admin/boards/{boardId}` | 주제가 없는 게시판 삭제 | `204`, `404`, `409 Board has topics` |
+| `PUT /admin/boards-order` | 메뉴 순서 바꾸기 | `Board[]`, `400 Every board must be listed once` |
+| `PUT /admin/menus` | 스킨별 메뉴 저장 | `{ "menus": … }`, `400 Invalid menu: …` |
+
+게시판 만들기·바꾸기 (모든 필드 필요):
+
+```json
+{
+  "name": "notice", "displayName": "공지사항", "icon": "megaphone",
+  "writePermission": "admins", "commentPermission": "users",
+  "isListed": true, "isActive": true, "separatorBefore": false
+}
+```
+
+`name`은 `mediabbs board add`와 같은 규칙, `icon`은 Bootstrap Icons 이름(`bi-`를 붙여도 됨) 또는 `null`.
+검증 실패는 `400 Invalid board name` / `Invalid display name` / `Invalid icon name`.
+
+순서 바꾸기는 모든 게시판 ID를 원하는 순서로 보냅니다.
+
+```json
+{ "ids": [3, 1, 2] }
+```
+
+메뉴 저장은 스킨 이름(또는 모든 스킨에 쓰는 `default`)별 메뉴 항목 배열입니다. 항목 형식은 클라이언트
+`config.js`의 `menus`와 같습니다([mediabbs-client README](https://github.com/Lastorder-DC/mediabbs-client#상단-메뉴)).
+`null`을 보내면 저장된 메뉴를 지웁니다(클라이언트 `config.js` 또는 스킨 기본 메뉴로 돌아감).
+링크는 `http(s)://` 주소나 `/`로 시작하는 경로만 쓸 수 있습니다.
+
+```json
+{
+  "menus": {
+    "liberty": [
+      { "type": "boards" },
+      { "type": "recentChanges" },
+      { "label": { "ko": "도움말", "en": "Help" }, "url": "https://wiki.example.org/wiki/Help:Contents" },
+      { "label": "더 보기", "children": [{ "label": "규칙", "url": "/notice/1" }] }
+    ]
+  }
+}
+```
 
 ## 업로드
 

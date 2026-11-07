@@ -4,7 +4,21 @@ diesel::table! {
         display_name -> Varchar,
         name -> Varchar,
         is_active -> Bool,
+        sort_order -> Integer,
+        icon -> Nullable<Varchar>,
+        write_permission -> Varchar,
+        comment_permission -> Varchar,
+        is_listed -> Bool,
+        separator_before -> Bool,
         created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    site_settings (name) {
+        name -> Varchar,
+        value -> Mediumtext,
         updated_at -> Timestamp,
     }
 }
@@ -64,4 +78,11 @@ diesel::joinable!(comments -> topics (topic_id));
 diesel::joinable!(logs -> log_types (log_type_id));
 diesel::joinable!(topics -> boards (board_id));
 
-diesel::allow_tables_to_appear_in_same_query!(boards, comments, logs, log_types, topics,);
+diesel::allow_tables_to_appear_in_same_query!(
+    boards,
+    comments,
+    logs,
+    log_types,
+    site_settings,
+    topics,
+);

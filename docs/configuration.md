@@ -145,7 +145,7 @@
 
 ### NAV_LINKS
 
-스킨마다 메뉴 구성 자체를 바꾸려면 클라이언트 `config.js`의 `menus`를 쓰세요
+스킨마다 메뉴 구성 자체를 바꾸려면 클라이언트의 관리 페이지(`/admin` → 메뉴)나 `config.js`의 `menus`를 쓰세요
 ([mediabbs-client README](https://github.com/Lastorder-DC/mediabbs-client#상단-메뉴)).
 `NAV_LINKS`는 각 스킨 메뉴의 `navLinks` 자리(기본 메뉴는 맨 끝)에 들어갑니다.
 

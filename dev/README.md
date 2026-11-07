@@ -66,13 +66,17 @@ npm install
 npx playwright install chromium-headless-shell
 node oauth-e2e.js
 node ui-e2e.js
+node admin-e2e.js
 ```
 
 `oauth-e2e.js` logs in through the wiki as each test user (including the
 consent screen) and checks moderation, blocks, uploads, token refresh, logout,
 anonymous posting and disabled boards. `ui-e2e.js` drives the client: editor
 modals, quoting, the moderation menu, infinite scroll, error messages, the
-language switch and both skins (Liberty, Simple).
+language switch and both skins (Liberty, Simple). `admin-e2e.js` checks the
+admin page: board settings (icon, separator, order, menu visibility, write
+permissions, deletion) and per-skin menus, and how both skins show them. It
+leaves a hidden test board at the end of the board list.
 
 ### More manual checks
 

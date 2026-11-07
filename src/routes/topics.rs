@@ -6,7 +6,8 @@ use crate::custom_error::CustomError;
 use crate::db::DbPool;
 use crate::mediawiki::MwClient;
 use crate::models::{
-    Board, Comment, CommentPublic, Log, LogContent, LogType, PublicEntity, Topic, TopicForm,
+    Board, Comment, CommentPublic, Log, LogContent, LogType, Permission, PublicEntity, Topic,
+    TopicForm,
 };
 use actix_web::{
     get, post, put, web,
@@ -244,6 +245,7 @@ async fn post_topic(
     enum ErrorKind {
         BoardNotFound,
         BoardIsInactive,
+        NotPermitted(Permission),
         OtherError(anyhow::Error),
     }
 
@@ -265,6 +267,10 @@ async fn post_topic(
         let board = Board::find_by_id(&mut conn, board_id).map_err(|_| ErrorKind::BoardNotFound)?;
         if !board.is_active {
             return Err(ErrorKind::BoardIsInactive);
+        }
+        let permission = board.write_permission();
+        if !permission.allows(profile.as_ref().map(Profile::is_admin)) {
+            return Err(ErrorKind::NotPermitted(permission));
         }
         let topic = conn
             .transaction::<Topic, _, _>(|conn| match profile {
@@ -291,7 +297,16 @@ async fn post_topic(
         Err(ErrorKind::BoardIsInactive) => {
             Ok(HttpResponse::Forbidden().body("Board is not active"))
         }
+        Err(ErrorKind::NotPermitted(p)) => Ok(not_permitted(p)),
         Err(ErrorKind::OtherError(e)) => Err(e.into()),
+    }
+}
+
+/// 403 for a board whose write/comment permission excludes this user.
+fn not_permitted(permission: Permission) -> HttpResponse {
+    match permission {
+        Permission::Users => HttpResponse::Forbidden().body("LoginRequired"),
+        _ => HttpResponse::Forbidden().body("Admin only"),
     }
 }
 
@@ -319,6 +334,7 @@ async fn post_topic_comments(
         TopicIsSuspended,
         TopicIsClosed,
         BoardIsInactive,
+        NotPermitted(Permission),
         OtherError(anyhow::Error),
     }
 
@@ -335,6 +351,7 @@ async fn post_topic_comments(
         return Ok(HttpResponse::Forbidden().body("You are blocked"));
     }
 
+    let user = profile.as_ref().map(Profile::is_admin);
     let mut conn = pool.get()?;
     let res = block(move || -> Result<(), ErrorKind> {
         let topic = Topic::find_by_id(&mut conn, topic_id).map_err(|_| ErrorKind::TopicNotFound)?;
@@ -347,6 +364,9 @@ async fn post_topic_comments(
         }
         match Board::find_by_id(&mut conn, topic.board_id) {
             Ok(board) if !board.is_active => return Err(ErrorKind::BoardIsInactive),
+            Ok(board) if !board.comment_permission().allows(user) => {
+                return Err(ErrorKind::NotPermitted(board.comment_permission()))
+            }
             Ok(_) => {}
             Err(e) => return Err(ErrorKind::OtherError(e)),
         }
@@ -374,6 +394,7 @@ async fn post_topic_comments(
         Err(ErrorKind::BoardIsInactive) => {
             Ok(HttpResponse::Forbidden().body("Board is not active"))
         }
+        Err(ErrorKind::NotPermitted(p)) => Ok(not_permitted(p)),
         Err(ErrorKind::OtherError(e)) => Err(e.into()),
     }
 }

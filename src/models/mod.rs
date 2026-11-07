@@ -1,10 +1,14 @@
 mod board;
 mod comment;
 mod log;
+pub mod menu;
+mod site_setting;
 mod topic;
 pub use self::log::{Log, LogContent, LogType};
-pub use board::{Board, BoardPublic};
+pub use board::{Board, BoardForm, BoardPublic, DeleteBoardError, Permission};
 pub use comment::{Comment, CommentForm, CommentPublic};
+pub use menu::Menus;
+pub use site_setting::SiteSetting;
 pub use topic::{Topic, TopicForm, TopicPublic};
 
 use actix_web::{
