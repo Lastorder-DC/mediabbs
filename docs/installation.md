@@ -429,6 +429,19 @@ server {
 - 클라이언트: `backendHost: "https://bbs-api.example.org"`
 - 위키의 OAuth 콜백 URL은 여전히 **클라이언트** 주소(`https://bbs.example.org/auth`)입니다.
 
+### 실시간 의견 갱신 (SSE)
+
+주제 화면은 `GET /topics/{id}/events`(Server-Sent Events)로 새 의견, 의견 숨김, 주제 상태 변경을 바로
+받습니다. 위 nginx 예시 그대로 동작하며 따로 설정할 것은 없습니다.
+
+- 백엔드가 `X-Accel-Buffering: no`를 보내므로 nginx가 이 응답만 버퍼링하지 않습니다.
+- 25초마다 빈 신호를 보내므로 nginx `proxy_read_timeout` 기본값(60초)이나 Cloudflare(100초)에 끊기지 않습니다.
+  `proxy_read_timeout`을 25초보다 짧게 줄였다면 늘려 주세요.
+- 연결이 안 되는 환경(버퍼링하는 프록시, 동시 연결 한도 `LIVE_UPDATES_MAX_STREAMS` 초과 등)에서는
+  클라이언트가 자동으로 예전 방식(목록 끝에서 10초마다 확인)으로 돌아갑니다.
+- 이벤트는 백엔드 프로세스 안에서만 전달됩니다. 백엔드를 여러 대 띄우면 다른 프로세스에서 일어난 변경은
+  10초 확인으로만 반영되므로, 한 대로 운영하거나 같은 주제의 요청을 한 프로세스로 보내세요.
+
 ### 실제 사용자 IP
 
 비로그인 글쓴이 표시와 IP 차단 확인에 쓰이므로 중요합니다. 백엔드는 `TRUST_PROXY`에 등록된

@@ -170,6 +170,26 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
 `Board is not active` / `You are blocked`, `403 LoginRequired` / `403 Admin only`
 (게시판의 `commentPermission`이 `users` / `admins`일 때).
 
+### `GET /topics/{topicId}/events`
+
+주제 화면의 실시간 갱신(Server-Sent Events, `text/event-stream`). 로그인 필요 없음.
+이벤트에는 무엇이 바뀌었는지만 들어 있고, 내용은 평소 API로 다시 받습니다(숨김 등 권한 규칙이 그대로 적용됨).
+
+| 이벤트 | `data` | 의미 |
+|---|---|---|
+| `comment` | `{"id": 의견 ID}` | 새 의견 |
+| `comment_updated` | `{"id": 의견 ID}` | 의견이 바뀜 (숨김/숨김 해제) |
+| `topic` | `{"id": 주제 ID}` | 주제 상태가 바뀜 (종료, 잠금, 숨김, 고정) |
+| `resync` | `{}` | 이벤트를 놓쳤으니 화면을 다시 불러올 것 |
+
+연결하면 `retry: 5000`을 먼저 보내고, 25초마다 `: ping` 주석을 보냅니다.
+오류: `404 Topic is not found`, `503 Live updates are unavailable`(꺼져 있거나 동시 연결이 `LIVE_UPDATES_MAX_STREAMS`에 이름).
+
+```js
+const events = new EventSource("https://bbs-api.example.org/topics/12/events");
+events.addEventListener("comment", (e) => console.log("새 의견", JSON.parse(e.data).id));
+```
+
 ### `GET /search`
 
 주제 제목과 의견 내용 검색. 로그인 필요 없음.

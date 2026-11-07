@@ -135,6 +135,7 @@
 | `SITENOTICE_ENABLED` | `true` | 위키의 사이트 공지를 게시판 위에 표시 |
 | `SITENOTICE_PAGE` | `MediaWiki:Sitenotice` | 공지로 쓸 위키 문서 |
 | `BOARDS_CACHE_SECONDS` | `300` | 게시판 목록(`GET /boards`)의 브라우저 캐시 시간(초) |
+| `LIVE_UPDATES_MAX_STREAMS` | `1000` | 동시에 열어 둘 실시간 갱신 연결 수(열린 주제 화면 하나당 하나). 넘으면 그 화면은 10초 확인으로 대신합니다. `0`이면 실시간 갱신을 끕니다 ([설치 안내](installation.md#실시간-의견-갱신-sse)) |
 
 ### 이름공간 자동 설정
 

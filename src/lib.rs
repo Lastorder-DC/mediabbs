@@ -6,6 +6,7 @@ pub mod config;
 pub mod connection_info;
 pub mod custom_error;
 pub mod db;
+pub mod events;
 pub mod mediawiki;
 pub mod models;
 pub mod routes;
@@ -35,6 +36,8 @@ pub async fn run() -> std::io::Result<()> {
         auth::JwtVerifier::new(&config).unwrap_or_else(|e| exit_with_config_error(e)),
     );
     let mw = web::Data::new(mediawiki::MwClient::new(config.clone()));
+    // Shared by all workers, so every stream hears every change.
+    let events = web::Data::new(events::Events::new(config.site.live_updates_max_streams));
     let storage = web::Data::new(
         storage::Storage::new(config.clone()).unwrap_or_else(|e| exit_with_config_error(e)),
     );
@@ -86,6 +89,7 @@ pub async fn run() -> std::io::Result<()> {
             .app_data(jwt.clone())
             .app_data(mw.clone())
             .app_data(storage.clone())
+            .app_data(events.clone())
             .app_data(actix_web_validator::JsonConfig::default().limit(1024 * 1024))
             .service(web::scope("/v1").service(routes::scope(&config)))
             .service(routes::scope(&config))

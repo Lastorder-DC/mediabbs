@@ -2321,6 +2321,7 @@ dependencies = [
  "diesel_migrations",
  "dotenvy",
  "env_logger",
+ "futures-util",
  "jsonwebtoken",
  "log",
  "mime_guess",

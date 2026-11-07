@@ -68,6 +68,7 @@ node oauth-e2e.js
 node ui-e2e.js
 node admin-e2e.js
 node search-e2e.js
+node live-e2e.js
 ```
 
 `oauth-e2e.js` logs in through the wiki as each test user (including the
@@ -79,7 +80,8 @@ admin page: board settings (icon, separator, order, menu visibility, write
 permissions, deletion) and per-skin menus, and how both skins show them. It
 leaves a hidden test board at the end of the board list. `search-e2e.js` checks
 search: titles, comments, authors, filters, the search page and the board
-search boxes of both skins.
+search boxes of both skins. `live-e2e.js` checks live updates (new and hidden
+comments, topic status, background tabs) and the polling fallback.
 
 ### More manual checks
 

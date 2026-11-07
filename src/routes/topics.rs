@@ -4,6 +4,7 @@ use crate::auth::{Profile, UserInfo};
 use crate::connection_info::ConnectionInfo;
 use crate::custom_error::CustomError;
 use crate::db::DbPool;
+use crate::events::{EventKind, Events};
 use crate::mediawiki::MwClient;
 use crate::models::{
     Board, Comment, CommentPublic, Log, LogContent, LogType, Permission, PublicEntity, Topic,
@@ -105,6 +106,7 @@ fn log_put_topic_status(
 #[put("{topic_id}/status")]
 async fn put_topic_status(
     pool: Data<DbPool>,
+    events: Data<Events>,
     mw: Data<MwClient>,
     UserInfo { token, .. }: UserInfo,
     topic_id: Path<i32>,
@@ -159,7 +161,10 @@ async fn put_topic_status(
     .await?;
 
     match res {
-        Ok(topic) => Ok(HttpResponse::Ok().json(topic.get_public())),
+        Ok(topic) => {
+            events.publish(topic.id, EventKind::Topic, topic.id);
+            Ok(HttpResponse::Ok().json(topic.get_public()))
+        }
         Err(ErrorKind::TopicNotFound) => Ok(HttpResponse::NotFound().body("Topic is not found")),
         Err(ErrorKind::OtherError(e)) => Err(e.into()),
     }
@@ -325,6 +330,7 @@ async fn post_topic_comments(
     UserInfo { token, .. }: UserInfo,
     pool: Data<DbPool>,
     mw: Data<MwClient>,
+    events: Data<Events>,
 ) -> Result<HttpResponse, CustomError> {
     let topic_id = topic_id.into_inner();
     #[derive(Debug, Display)]
@@ -353,7 +359,7 @@ async fn post_topic_comments(
 
     let user = profile.as_ref().map(Profile::is_admin);
     let mut conn = pool.get()?;
-    let res = block(move || -> Result<(), ErrorKind> {
+    let res = block(move || -> Result<i32, ErrorKind> {
         let topic = Topic::find_by_id(&mut conn, topic_id).map_err(|_| ErrorKind::TopicNotFound)?;
         if topic.is_hidden {
             return Err(ErrorKind::TopicIsHidden);
@@ -370,21 +376,19 @@ async fn post_topic_comments(
             Ok(_) => {}
             Err(e) => return Err(ErrorKind::OtherError(e)),
         }
-        match profile {
-            Some(Profile { id, username, .. }) => {
-                Comment::create(&mut conn, &topic, &content, Some(id), Some(&username), &ip)
-                    .map_err(ErrorKind::OtherError)?;
-            }
-            None => {
-                Comment::create(&mut conn, &topic, &content, None, None, &ip)
-                    .map_err(ErrorKind::OtherError)?;
-            }
+        let (author_id, author_name) = match &profile {
+            Some(Profile { id, username, .. }) => (Some(*id), Some(username.as_str())),
+            None => (None, None),
         };
-        Ok(())
+        Comment::create(&mut conn, &topic, &content, author_id, author_name, &ip)
+            .map_err(ErrorKind::OtherError)
     })
     .await?;
     match res {
-        Ok(()) => Ok(HttpResponse::NoContent().finish()),
+        Ok(comment_id) => {
+            events.publish(topic_id, EventKind::Comment, comment_id);
+            Ok(HttpResponse::NoContent().finish())
+        }
         Err(ErrorKind::TopicNotFound) => Ok(HttpResponse::NotFound().body("Topic is not found")),
         Err(ErrorKind::TopicIsHidden) => Ok(HttpResponse::Forbidden().body("Topic is hidden")),
         Err(ErrorKind::TopicIsClosed) => Ok(HttpResponse::Forbidden().body("Topic is closed")),
@@ -399,6 +403,33 @@ async fn post_topic_comments(
     }
 }
 
+/// Live updates for a topic page (Server-Sent Events, see `events`):
+/// `comment`, `comment_updated` and `topic` events with `{"id": …}`, `resync`
+/// when events were missed. `503` when live updates are off or full; clients
+/// then poll.
+#[get("{topic_id}/events")]
+async fn get_topic_events(
+    pool: Data<DbPool>,
+    events: Data<Events>,
+    topic_id: Path<i32>,
+) -> Result<HttpResponse, CustomError> {
+    let topic_id = topic_id.into_inner();
+    let mut conn = pool.get()?;
+    let exists = block(move || Topic::find_by_id(&mut conn, topic_id).is_ok()).await?;
+    if !exists {
+        return Ok(HttpResponse::NotFound().body("Topic is not found"));
+    }
+    match events.stream(topic_id) {
+        Some(stream) => Ok(HttpResponse::Ok()
+            .content_type("text/event-stream")
+            .insert_header(("Cache-Control", "no-cache, no-transform"))
+            // nginx: pass events through instead of buffering the response.
+            .insert_header(("X-Accel-Buffering", "no"))
+            .streaming(stream)),
+        None => Ok(HttpResponse::ServiceUnavailable().body("Live updates are unavailable")),
+    }
+}
+
 pub fn scope() -> Scope {
     web::scope("/topics")
         .service(post_topic)
@@ -406,4 +437,5 @@ pub fn scope() -> Scope {
         .service(put_topic_status)
         .service(get_topic_comments)
         .service(post_topic_comments)
+        .service(get_topic_events)
 }

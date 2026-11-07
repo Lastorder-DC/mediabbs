@@ -144,6 +144,9 @@ pub struct SiteConfig {
     pub sitenotice_enabled: bool,
     pub sitenotice_page: String,
     pub boards_cache_seconds: u32,
+    /// Open live-update streams allowed at once (0 turns live updates off;
+    /// clients then poll).
+    pub live_updates_max_streams: usize,
 }
 
 impl Config {
@@ -391,6 +394,12 @@ impl Config {
                     .parse()
                     .map_err(|_| "BOARDS_CACHE_SECONDS must be a non-negative integer")?,
             },
+            live_updates_max_streams: match get("LIVE_UPDATES_MAX_STREAMS") {
+                None => 1000,
+                Some(v) => v
+                    .parse()
+                    .map_err(|_| "LIVE_UPDATES_MAX_STREAMS must be a non-negative integer")?,
+            },
         };
 
         Ok(Config {
@@ -501,6 +510,7 @@ mod tests {
         assert!(c.cors_allowed_origins.is_empty());
         assert_eq!(c.sentry_dsn, None);
         assert_eq!(c.site.boards_cache_seconds, 300);
+        assert_eq!(c.site.live_updates_max_streams, 1000);
         assert_eq!(c.trust_proxy, TrustProxy::default_loopback());
     }
 

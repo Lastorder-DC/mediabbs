@@ -56,7 +56,13 @@ pub struct CommentPublic {
     pub updated_at: DateTime<Utc>,
 }
 
+diesel::define_sql_function! {
+    /// The id of this connection's last insert.
+    fn last_insert_id() -> diesel::sql_types::Unsigned<diesel::sql_types::BigInt>;
+}
+
 impl Comment {
+    /// Adds a comment and returns its id.
     pub fn create(
         conn: &mut MysqlConnection,
         topic: &Topic,
@@ -64,7 +70,7 @@ impl Comment {
         author_id: Option<i32>,
         author_name: Option<&str>,
         author_ip: &IpAddr,
-    ) -> Result<()> {
+    ) -> Result<i32> {
         let ip_bin: Vec<u8> = match &author_ip {
             IpAddr::V4(ip) => ip.octets().to_vec(),
             IpAddr::V6(ip) => ip.octets().to_vec(),
@@ -79,7 +85,8 @@ impl Comment {
         diesel::insert_into(comments::table)
             .values(new_comment)
             .execute(conn)?;
-        Ok(())
+        let id: u64 = diesel::select(last_insert_id()).get_result(conn)?;
+        Ok(i32::try_from(id)?)
     }
 
     pub fn get_all(conn: &mut MysqlConnection, limit: i32, offset: i32) -> Result<Vec<Self>> {
@@ -158,7 +165,7 @@ mod tests {
             )
             .expect("must succeed");
             let topics = Topic::get_all(conn, 1, 0).expect("must succeed");
-            Comment::create(
+            let new_id = Comment::create(
                 conn,
                 &topics[0],
                 "Test content",
@@ -168,6 +175,7 @@ mod tests {
             )
             .expect("must succeed");
             let comments = Comment::get_all(conn, 1, 0).expect("must succeed");
+            assert_eq!(new_id, comments[0].id);
             assert_eq!("Test content", comments[0].content);
             assert_eq!(Some("test_author".to_owned()), comments[0].author_name);
             assert_eq!(true, comments[0].has_ipv6());

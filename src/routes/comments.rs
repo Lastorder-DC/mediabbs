@@ -4,6 +4,7 @@ use crate::auth::UserInfo;
 use crate::connection_info::ConnectionInfo;
 use crate::custom_error::CustomError;
 use crate::db::DbPool;
+use crate::events::{EventKind, Events};
 use crate::mediawiki::MwClient;
 use crate::models::{Comment, CommentForm, Log, LogContent, LogType};
 use actix_web::{
@@ -87,6 +88,7 @@ fn log_put_comment_status(
 #[put("{comment_id}/status")]
 async fn put_comment_status(
     pool: Data<DbPool>,
+    events: Data<Events>,
     mw: Data<MwClient>,
     UserInfo { token, .. }: UserInfo,
     comment_id: Path<i32>,
@@ -139,7 +141,10 @@ async fn put_comment_status(
     .await?;
 
     match res {
-        Ok(comment) => Ok(HttpResponse::Ok().json(comment.get_public(true))),
+        Ok(comment) => {
+            events.publish(comment.topic_id, EventKind::CommentUpdated, comment.id);
+            Ok(HttpResponse::Ok().json(comment.get_public(true)))
+        }
         Err(ErrorKind::CommentNotFound) => {
             Ok(HttpResponse::NotFound().body("Comment is not found"))
         }
