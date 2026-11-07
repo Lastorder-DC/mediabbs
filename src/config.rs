@@ -4,7 +4,7 @@
 //!
 //! See `.env.example` for every variable and its default.
 
-use crate::connection_info::TrustProxy;
+use crate::connection_info::{ForwardedHeader, TrustProxy};
 use std::env;
 
 #[derive(Debug, Clone)]
@@ -16,6 +16,7 @@ pub struct Config {
     /// Empty means "allow any origin" (not recommended in production).
     pub cors_allowed_origins: Vec<String>,
     pub trust_proxy: TrustProxy,
+    pub forwarded_header: ForwardedHeader,
     pub sentry_dsn: Option<String>,
     pub mw: MwConfig,
     pub oauth: OauthConfig,
@@ -147,6 +148,8 @@ pub struct SiteConfig {
     /// Open live-update streams allowed at once (0 turns live updates off;
     /// clients then poll).
     pub live_updates_max_streams: usize,
+    /// Topics, comments and uploads per client address per minute (0 = no limit).
+    pub posts_per_minute: usize,
 }
 
 impl Config {
@@ -183,6 +186,8 @@ impl Config {
             .unwrap_or_default();
         let trust_proxy = TrustProxy::parse(get("TRUST_PROXY").as_deref())
             .map_err(|e| format!("TRUST_PROXY: {}", e))?;
+        let forwarded_header = ForwardedHeader::parse(get("FORWARDED_HEADER").as_deref())
+            .map_err(|e| format!("FORWARDED_HEADER: {}", e))?;
         let sentry_dsn = get_any(&["SENTRY_DSN", "SENTRY_URL"]);
 
         // --- MediaWiki ---
@@ -353,6 +358,22 @@ impl Config {
             public_url,
             storage,
         };
+        // Types a browser can run script in. S3/CDN serve them as-is (the local
+        // backend adds a sandbox CSP, but refuse them everywhere).
+        const ACTIVE_TYPES: &[&str] = &[
+            "svg", "svgz", "html", "htm", "xhtml", "xht", "xml", "xsl", "js", "mjs", "css", "pdf",
+            "swf",
+        ];
+        if let Some(ext) = upload
+            .allowed_extensions
+            .iter()
+            .find(|e| ACTIVE_TYPES.contains(&e.as_str()))
+        {
+            return Err(format!(
+                "UPLOAD_ALLOWED_EXTENSIONS: '{}' files can carry scripts and cannot be allowed",
+                ext
+            ));
+        }
 
         // --- site / client ---
         let nav_links = match get("NAV_LINKS") {
@@ -400,6 +421,12 @@ impl Config {
                     .parse()
                     .map_err(|_| "LIVE_UPDATES_MAX_STREAMS must be a non-negative integer")?,
             },
+            posts_per_minute: match get("POSTS_PER_MINUTE") {
+                None => 10,
+                Some(v) => v
+                    .parse()
+                    .map_err(|_| "POSTS_PER_MINUTE must be a non-negative integer")?,
+            },
         };
 
         Ok(Config {
@@ -408,6 +435,7 @@ impl Config {
             migrate_on_start,
             cors_allowed_origins,
             trust_proxy,
+            forwarded_header,
             sentry_dsn,
             mw,
             oauth,
@@ -511,6 +539,7 @@ mod tests {
         assert_eq!(c.sentry_dsn, None);
         assert_eq!(c.site.boards_cache_seconds, 300);
         assert_eq!(c.site.live_updates_max_streams, 1000);
+        assert_eq!(c.site.posts_per_minute, 10);
         assert_eq!(c.trust_proxy, TrustProxy::default_loopback());
     }
 
@@ -677,6 +706,8 @@ mod tests {
         assert!(config(&[("CHECK_IP_BLOCKS", "maybe")]).is_err());
         assert!(config(&[("NAV_LINKS", "{}")]).is_err());
         assert!(config(&[("TRUST_PROXY", "not-an-ip")]).is_err());
+        assert!(config(&[("FORWARDED_HEADER", "x-real-ip")]).is_err());
+        assert!(config(&[("UPLOAD_ALLOWED_EXTENSIONS", "png,SVG")]).is_err());
         assert!(config(&[("RECENT_CHANGES_NAMESPACES", "0|x")]).is_err());
         assert!(config(&[("OAUTH_CLIENT_SECRET", "")]).is_err());
     }

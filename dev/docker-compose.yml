@@ -66,6 +66,8 @@ services:
       STORAGE_BACKEND: local
       UPLOAD_PUBLIC_URL: http://127.0.0.1:18081/uploads/
       DEFAULT_BOARD: free
+      # The e2e tests post far more than people do (default 10 per minute).
+      POSTS_PER_MINUTE: "600"
       RUST_LOG: actix_web=info,mediabbs=debug
     volumes:
       - shared:/shared:ro

@@ -78,7 +78,7 @@ impl Topic {
         author_id: Option<i32>,
         author_name: Option<&str>,
         author_ip: &IpAddr,
-    ) -> Result<()> {
+    ) -> Result<Topic> {
         let ip_bin: Vec<u8> = match &author_ip {
             IpAddr::V4(ip) => ip.octets().to_vec(),
             IpAddr::V6(ip) => ip.octets().to_vec(),
@@ -93,7 +93,9 @@ impl Topic {
         diesel::insert_into(topics::table)
             .values(new_topic)
             .execute(conn)?;
-        Ok(())
+        // This connection's insert, not whichever topic is newest by now.
+        let id: u64 = diesel::select(super::comment::last_insert_id()).get_result(conn)?;
+        Ok(topics::table.find(i32::try_from(id)?).first(conn)?)
     }
 
     pub fn get_latest(conn: &mut MysqlConnection) -> Result<Self> {
@@ -193,7 +195,7 @@ mod tests {
             let topics = Topic::get_all(conn, 1, 0).expect("must succeed");
             assert_eq!("test title", topics[0].title);
             assert_eq!(Some("test_author".to_owned()), topics[0].author_name);
-            assert_eq!(true, topics[0].has_ipv6());
+            assert!(topics[0].has_ipv6());
             let arr: &[u8; 16] = topics[0].author_ip[..].try_into().expect("must succeed");
             assert_eq!(ip, IpAddr::from(*arr));
 
@@ -202,13 +204,13 @@ mod tests {
             let topics = Topic::get_all(conn, 1, 0).expect("must succeed");
             assert_eq!("test title 2", topics[0].title);
             assert_eq!(None, topics[0].author_name);
-            assert_eq!(false, topics[0].has_ipv6());
+            assert!(!topics[0].has_ipv6());
             let arr: &[u8; 4] = topics[0].author_ip[0..4].try_into().expect("must succeed");
             assert_eq!(ip, IpAddr::from(*arr));
-            assert_eq!(false, topics[0].is_closed);
-            assert_eq!(false, topics[0].is_suspended);
-            assert_eq!(false, topics[0].is_hidden);
-            assert_eq!(false, topics[0].is_pinned);
+            assert!(!topics[0].is_closed);
+            assert!(!topics[0].is_suspended);
+            assert!(!topics[0].is_hidden);
+            assert!(!topics[0].is_pinned);
             Ok(())
         });
     }

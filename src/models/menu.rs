@@ -86,10 +86,13 @@ fn check_text(text: &MenuText, what: &str) -> Result<(), String> {
 }
 
 /// Links must be http(s) URLs or site paths: no `javascript:` and the like.
+/// No backslashes: browsers read `/\host` as `//host` (another site).
 fn check_url(url: &str) -> Result<(), String> {
     let lower = url.to_ascii_lowercase();
     let ok = url.len() <= MAX_URL
-        && !url.chars().any(|c| c.is_control() || c.is_whitespace())
+        && !url
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || c == '\\')
         && (lower.starts_with("https://")
             || lower.starts_with("http://")
             || (url.starts_with('/') && !url.starts_with("//")));
@@ -205,6 +208,7 @@ mod tests {
         let bad = [
             r#"{"simple": [{"label": "x", "url": "javascript:alert(1)"}]}"#,
             r#"{"simple": [{"label": "x", "url": "//evil.example"}]}"#,
+            r#"{"simple": [{"label": "x", "url": "/\\evil.example"}]}"#,
             r#"{"simple": [{"label": "", "url": "/a"}]}"#,
             r#"{"simple": [{"label": "x"}]}"#,
             r#"{"simple": [{"label": "x", "url": "/a", "children": [{"label": "y", "url": "/b"}]}]}"#,

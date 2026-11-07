@@ -63,6 +63,8 @@ pub struct SearchHit {
 const COMMENTS_PER_HIT: usize = 3;
 /// Characters in a snippet.
 const SNIPPET_CHARS: usize = 140;
+/// Only the start of a long comment is searched for the snippet.
+const SNIPPET_SCAN_CHARS: usize = 20_000;
 
 pub const MAX_QUERY_CHARS: usize = 100;
 const MAX_TERMS: usize = 5;
@@ -162,7 +164,11 @@ fn plain_text(markdown: &str) -> String {
 
 /// About `SNIPPET_CHARS` characters around the first occurrence of a term.
 pub fn snippet(content: &str, terms: &[String]) -> String {
-    let text: Vec<char> = plain_text(content).chars().collect();
+    let head = match content.char_indices().nth(SNIPPET_SCAN_CHARS * 2) {
+        Some((end, _)) => &content[..end],
+        None => content,
+    };
+    let text: Vec<char> = plain_text(head).chars().take(SNIPPET_SCAN_CHARS).collect();
     let lower: Vec<char> = text
         .iter()
         .map(|c| c.to_lowercase().next().unwrap_or(*c))

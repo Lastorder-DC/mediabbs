@@ -6,7 +6,7 @@ use crate::custom_error::CustomError;
 use crate::db::DbPool;
 use crate::events::{EventKind, Events};
 use crate::mediawiki::MwClient;
-use crate::models::{Comment, CommentForm, Log, LogContent, LogType};
+use crate::models::{Comment, CommentForm, Log, LogContent, LogType, Topic};
 use actix_web::{
     get, put, web,
     web::{block, Data, Path, Query},
@@ -43,9 +43,19 @@ async fn get_comment(
         }
     }
     let mut conn = pool.get()?;
-    match block(move || Comment::find_by_id(&mut conn, comment_id)).await? {
-        Ok(comment) => Ok(HttpResponse::Ok().json(comment.get_public(show_hidden))),
-        Err(_) => Ok(HttpResponse::NotFound().body("Topic is not found")),
+    let found = block(move || -> Option<(Comment, bool)> {
+        let comment = Comment::find_by_id(&mut conn, comment_id).ok()?;
+        let topic_hidden = Topic::find_by_id(&mut conn, comment.topic_id)
+            .map(|t| t.is_hidden)
+            .unwrap_or(true);
+        Some((comment, topic_hidden))
+    })
+    .await?;
+    match found {
+        // Comments of a hidden topic are hidden with it (admins: `showHidden`).
+        Some((_, true)) if !show_hidden => Ok(HttpResponse::Forbidden().body("Topic is hidden")),
+        Some((comment, _)) => Ok(HttpResponse::Ok().json(comment.get_public(show_hidden))),
+        None => Ok(HttpResponse::NotFound().body("Comment is not found")),
     }
 }
 

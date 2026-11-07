@@ -10,6 +10,7 @@ use crate::models::{
     Board, Comment, CommentPublic, Log, LogContent, LogType, Permission, PublicEntity, Topic,
     TopicForm,
 };
+use crate::rate_limit::{too_many, PostLimiter};
 use actix_web::{
     get, post, put, web,
     web::{block, Data, Path, Query},
@@ -191,9 +192,8 @@ async fn get_topic_comments(
         OtherError(anyhow::Error),
     }
 
-    let limit = query.limit.unwrap_or(10);
-    let limit = if limit > 20 { 20 } else { limit };
-    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(10).clamp(1, 20);
+    let offset = query.offset.unwrap_or(0).max(0);
 
     let mut conn = pool.get()?;
     let res = block(move || {
@@ -245,7 +245,12 @@ async fn post_topic(
     UserInfo { token, .. }: UserInfo,
     pool: Data<DbPool>,
     mw: Data<MwClient>,
+    limiter: Data<PostLimiter>,
 ) -> Result<HttpResponse, CustomError> {
+    // Before anything that costs (wiki lookups, the database).
+    if let Err(wait) = limiter.check(ip) {
+        return Ok(too_many(wait));
+    }
     #[derive(Debug, Display)]
     enum ErrorKind {
         BoardNotFound,
@@ -280,14 +285,13 @@ async fn post_topic(
         let topic = conn
             .transaction::<Topic, _, _>(|conn| match profile {
                 Some(Profile { id, username, .. }) => {
-                    Topic::create(conn, &board, &title, Some(id), Some(&username), &ip)?;
-                    let topic = Topic::get_latest(conn)?;
+                    let topic =
+                        Topic::create(conn, &board, &title, Some(id), Some(&username), &ip)?;
                     Comment::create(conn, &topic, &content, Some(id), Some(&username), &ip)?;
                     Ok(topic)
                 }
                 None => {
-                    Topic::create(conn, &board, &title, None, None, &ip)?;
-                    let topic = Topic::get_latest(conn)?;
+                    let topic = Topic::create(conn, &board, &title, None, None, &ip)?;
                     Comment::create(conn, &topic, &content, None, None, &ip)?;
                     Ok(topic)
                 }
@@ -323,6 +327,7 @@ struct PostCommentRequest {
 }
 
 #[post("{topic_id}/comments")]
+#[allow(clippy::too_many_arguments)] // actix extractors
 async fn post_topic_comments(
     ConnectionInfo { ip }: ConnectionInfo,
     Json(PostCommentRequest { content }): Json<PostCommentRequest>,
@@ -331,7 +336,11 @@ async fn post_topic_comments(
     pool: Data<DbPool>,
     mw: Data<MwClient>,
     events: Data<Events>,
+    limiter: Data<PostLimiter>,
 ) -> Result<HttpResponse, CustomError> {
+    if let Err(wait) = limiter.check(ip) {
+        return Ok(too_many(wait));
+    }
     let topic_id = topic_id.into_inner();
     #[derive(Debug, Display)]
     enum ErrorKind {
@@ -412,14 +421,17 @@ async fn get_topic_events(
     pool: Data<DbPool>,
     events: Data<Events>,
     topic_id: Path<i32>,
+    ConnectionInfo { ip }: ConnectionInfo,
 ) -> Result<HttpResponse, CustomError> {
     let topic_id = topic_id.into_inner();
     let mut conn = pool.get()?;
-    let exists = block(move || Topic::find_by_id(&mut conn, topic_id).is_ok()).await?;
-    if !exists {
-        return Ok(HttpResponse::NotFound().body("Topic is not found"));
+    let hidden = block(move || Topic::find_by_id(&mut conn, topic_id).map(|t| t.is_hidden)).await?;
+    match hidden {
+        Err(_) => return Ok(HttpResponse::NotFound().body("Topic is not found")),
+        Ok(true) => return Ok(HttpResponse::Forbidden().body("Topic is hidden")),
+        Ok(false) => {}
     }
-    match events.stream(topic_id) {
+    match events.stream(topic_id, ip) {
         Some(stream) => Ok(HttpResponse::Ok()
             .content_type("text/event-stream")
             .insert_header(("Cache-Control", "no-cache, no-transform"))

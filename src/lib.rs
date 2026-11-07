@@ -9,14 +9,12 @@ pub mod db;
 pub mod events;
 pub mod mediawiki;
 pub mod models;
+pub mod rate_limit;
 pub mod routes;
 pub mod schema;
 pub mod storage;
 use actix_cors::Cors;
-use actix_web::{
-    middleware::{DefaultHeaders, Logger},
-    web, App, HttpServer,
-};
+use actix_web::{middleware::Logger, web, App, HttpServer};
 use std::sync::Arc;
 
 fn exit_with_config_error(message: String) -> ! {
@@ -38,6 +36,7 @@ pub async fn run() -> std::io::Result<()> {
     let mw = web::Data::new(mediawiki::MwClient::new(config.clone()));
     // Shared by all workers, so every stream hears every change.
     let events = web::Data::new(events::Events::new(config.site.live_updates_max_streams));
+    let post_limiter = web::Data::new(rate_limit::PostLimiter::new(config.site.posts_per_minute));
     let storage = web::Data::new(
         storage::Storage::new(config.clone()).unwrap_or_else(|e| exit_with_config_error(e)),
     );
@@ -58,7 +57,10 @@ pub async fn run() -> std::io::Result<()> {
     }
 
     if config.cors_allowed_origins.is_empty() {
-        log::warn!("CORS_ALLOWED_ORIGINS is not set: any origin may send credentialed requests");
+        log::warn!(
+            "CORS_ALLOWED_ORIGINS is not set: a client on another origin cannot log in \
+             (only same-origin clients get cookies)"
+        );
     }
     log::info!(
         "MediaWiki: {} (api: {})",
@@ -69,27 +71,31 @@ pub async fn run() -> std::io::Result<()> {
 
     let bind_address = config.bind_address.clone();
     HttpServer::new(move || {
-        let mut cors = Cors::default();
+        // Credentials (the login cookies) only for the configured client origins.
+        // Without a list any origin may call the API, but without cookies, so
+        // other sites cannot act as a logged-in user (a client on the same
+        // origin as the API does not need CORS at all).
+        let mut cors = Cors::default().allow_any_method().allow_any_header();
         if config.cors_allowed_origins.is_empty() {
             cors = cors.allow_any_origin();
         } else {
             for origin in &config.cors_allowed_origins {
                 cors = cors.allowed_origin(origin);
             }
+            cors = cors.supports_credentials();
         }
-        cors = cors.allow_any_method().allow_any_header();
 
         App::new()
             .wrap(Logger::default())
             .wrap(sentry_actix::Sentry::new())
             .wrap(cors)
-            .wrap(DefaultHeaders::new().add(("Access-Control-Allow-Credentials", "true")))
             .app_data(web::Data::new(pool.clone()))
             .app_data(config_data.clone())
             .app_data(jwt.clone())
             .app_data(mw.clone())
             .app_data(storage.clone())
             .app_data(events.clone())
+            .app_data(post_limiter.clone())
             .app_data(actix_web_validator::JsonConfig::default().limit(1024 * 1024))
             .service(web::scope("/v1").service(routes::scope(&config)))
             .service(routes::scope(&config))

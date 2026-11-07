@@ -69,6 +69,7 @@ node ui-e2e.js
 node admin-e2e.js
 node search-e2e.js
 node live-e2e.js
+node security-e2e.js
 ```
 
 `oauth-e2e.js` logs in through the wiki as each test user (including the
@@ -82,6 +83,8 @@ leaves a hidden test board at the end of the board list. `search-e2e.js` checks
 search: titles, comments, authors, filters, the search page and the board
 search boxes of both skins. `live-e2e.js` checks live updates (new and hidden
 comments, topic status, background tabs) and the polling fallback.
+`security-e2e.js` checks comment sanitizing, hidden topics, CORS, the OAuth
+state check, menu links and the client's security headers (CSP).
 
 ### More manual checks
 

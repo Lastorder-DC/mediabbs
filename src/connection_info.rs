@@ -7,11 +7,15 @@
 //! * unset            : trust loopback only (`127.0.0.0/8`, `::1/128`)
 //! * `false` / `none` : never trust forwarding headers; use the socket peer address
 //! * `true` / `*`     : trust every hop (only safe if the backend is unreachable
-//!                      except through your proxy)
+//!   except through your proxy)
 //! * CIDR list        : comma separated, e.g. `10.0.0.0/8,192.168.0.0/16,::1/128`
 //!
 //! The client address is found by walking the forwarding chain from the nearest hop
 //! (the socket peer) towards the origin and stopping at the first untrusted address.
+//!
+//! Only one header is read, `FORWARDED_HEADER` (`x-forwarded-for` by default, or
+//! `forwarded`): a proxy sets one of them, and a client could send the other one
+//! with any address in it.
 
 use crate::config::Config;
 use actix_web::{
@@ -170,13 +174,33 @@ fn header_values<'a>(headers: &'a HeaderMap, name: &str) -> Vec<&'a HeaderValue>
     headers.get_all(name).collect()
 }
 
-/// Returns the forwarding chain, origin first. Entries that cannot be parsed
-/// (e.g. `unknown`, obfuscated identifiers) are kept as `None`.
-fn forwarded_chain(headers: &HeaderMap) -> Vec<Option<IpAddr>> {
+/// Which forwarding header the trusted proxy sets (`FORWARDED_HEADER`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ForwardedHeader {
+    #[default]
+    XForwardedFor,
+    Forwarded,
+}
+
+impl ForwardedHeader {
+    pub fn parse(value: Option<&str>) -> Result<Self, String> {
+        match value.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            None | Some("") | Some("x-forwarded-for") => Ok(ForwardedHeader::XForwardedFor),
+            Some("forwarded") => Ok(ForwardedHeader::Forwarded),
+            Some(other) => Err(format!(
+                "unknown header {:?} (x-forwarded-for or forwarded)",
+                other
+            )),
+        }
+    }
+}
+
+/// Returns the forwarding chain from `header`, origin first. Entries that cannot
+/// be parsed (e.g. `unknown`, obfuscated identifiers) are kept as `None`.
+fn forwarded_chain(headers: &HeaderMap, header: ForwardedHeader) -> Vec<Option<IpAddr>> {
     let mut chain = Vec::new();
-    let forwarded = header_values(headers, "forwarded");
-    if !forwarded.is_empty() {
-        for value in forwarded {
+    if header == ForwardedHeader::Forwarded {
+        for value in header_values(headers, "forwarded") {
             let value = value.to_str().unwrap_or_default();
             for element in value.split(',') {
                 let mut addr = None;
@@ -228,10 +252,15 @@ impl FromRequest for ConnectionInfo {
     fn from_request(req: &HttpRequest, _payload: &mut dev::Payload) -> Self::Future {
         match req.peer_addr() {
             Some(peer) => {
-                let chain = forwarded_chain(req.headers());
                 let ip = match req.app_data::<Data<Config>>() {
-                    Some(config) => resolve_client_ip(peer.ip(), &chain, &config.trust_proxy),
-                    None => resolve_client_ip(peer.ip(), &chain, &TrustProxy::default_loopback()),
+                    Some(config) => {
+                        let chain = forwarded_chain(req.headers(), config.forwarded_header);
+                        resolve_client_ip(peer.ip(), &chain, &config.trust_proxy)
+                    }
+                    None => {
+                        let chain = forwarded_chain(req.headers(), ForwardedHeader::default());
+                        resolve_client_ip(peer.ip(), &chain, &TrustProxy::default_loopback())
+                    }
                 };
                 ready(Ok(ConnectionInfo { ip }))
             }
@@ -316,7 +345,7 @@ mod tests {
             ("x-forwarded-for", "3.3.3.3"),
         ]);
         assert_eq!(
-            forwarded_chain(&h),
+            forwarded_chain(&h, ForwardedHeader::XForwardedFor),
             vec![
                 Some(ip("1.1.1.1")),
                 Some(ip("2.2.2.2")),
@@ -328,15 +357,18 @@ mod tests {
             ("x-forwarded-for", "2.2.2.2"),
         ]);
         assert_eq!(
-            forwarded_chain(&h),
+            forwarded_chain(&h, ForwardedHeader::XForwardedFor),
             vec![Some(ip("1.1.1.1")), Some(ip("2.2.2.2"))]
         );
         let h = headers(&[("x-forwarded-for", "1.1.1.1")]);
-        assert_eq!(forwarded_chain(&h), vec![Some(ip("1.1.1.1"))]);
+        assert_eq!(
+            forwarded_chain(&h, ForwardedHeader::XForwardedFor),
+            vec![Some(ip("1.1.1.1"))]
+        );
     }
 
     #[test]
-    fn test_chain_forwarded_preferred() {
+    fn test_chain_only_the_configured_header() {
         let h = headers(&[
             (
                 "forwarded",
@@ -344,7 +376,31 @@ mod tests {
             ),
             ("x-forwarded-for", "9.9.9.9"),
         ]);
-        assert_eq!(forwarded_chain(&h), vec![Some(ip("2001:db8::1")), None]);
+        assert_eq!(
+            forwarded_chain(&h, ForwardedHeader::Forwarded),
+            vec![Some(ip("2001:db8::1")), None]
+        );
+        // A client-sent `Forwarded` must not override the proxy's X-Forwarded-For.
+        assert_eq!(
+            forwarded_chain(&h, ForwardedHeader::XForwardedFor),
+            vec![Some(ip("9.9.9.9"))]
+        );
+        let spoof = headers(&[("forwarded", "for=203.0.113.9")]);
+        let chain = forwarded_chain(&spoof, ForwardedHeader::XForwardedFor);
+        assert!(chain.is_empty());
+        assert_eq!(
+            resolve_client_ip(ip("127.0.0.1"), &chain, &TrustProxy::default_loopback()),
+            ip("127.0.0.1")
+        );
+        assert_eq!(
+            ForwardedHeader::parse(None),
+            Ok(ForwardedHeader::XForwardedFor)
+        );
+        assert_eq!(
+            ForwardedHeader::parse(Some("Forwarded")),
+            Ok(ForwardedHeader::Forwarded)
+        );
+        assert!(ForwardedHeader::parse(Some("x-real-ip")).is_err());
     }
 
     #[test]

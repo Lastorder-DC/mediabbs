@@ -147,7 +147,7 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
 | `GET /topics/{topicId}/comments?offset=&limit=` | 의견 목록, 작성순. `limit` 기본 10, 최대 20 | `Comment[]` |
 | `POST /topics` | 주제 작성 | `Topic` |
 | `POST /topics/{topicId}/comments` | 의견 작성 | `204` |
-| `GET /comments/{commentId}?showHidden=true` | 의견 하나. `showHidden`은 관리자만 | `Comment` |
+| `GET /comments/{commentId}?showHidden=true` | 의견 하나. `showHidden`은 관리자만. 숨긴 주제의 의견은 `403 Topic is hidden` | `Comment` |
 
 `GET /topics/{id}`와 의견 목록은 `ETag`를 보내며 `If-None-Match`에 `304`로 답합니다.
 
@@ -157,8 +157,11 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
 { "boardId": 1, "title": "제목 (1~100자)", "content": "첫 의견 본문, 마크다운 (1~100000자)" }
 ```
 
-오류: `404 Board is not found`, `403 Board is not active`, `403 You are blocked`, `400` (검증 실패),
+오류: `429 Too many posts`(아래), `404 Board is not found`, `403 Board is not active`, `403 You are blocked`, `400` (검증 실패),
 `403 LoginRequired` / `403 Admin only` (게시판의 `writePermission`이 `users` / `admins`일 때).
+
+주제·의견·업로드는 합쳐서 IP마다 1분에 `POSTS_PER_MINUTE`건(기본 10)까지 받습니다. 넘으면
+`429 Too many posts`와 `Retry-After`(초)를 돌려줍니다.
 
 ### `POST /topics/{topicId}/comments`
 
@@ -166,7 +169,7 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
 { "content": "본문 (1~100000자)" }
 ```
 
-오류: `404`, `403 Topic is hidden` / `Topic is closed` / `Topic is suspended` /
+오류: `429 Too many posts`, `404`, `403 Topic is hidden` / `Topic is closed` / `Topic is suspended` /
 `Board is not active` / `You are blocked`, `403 LoginRequired` / `403 Admin only`
 (게시판의 `commentPermission`이 `users` / `admins`일 때).
 
@@ -183,7 +186,8 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
 | `resync` | `{}` | 이벤트를 놓쳤으니 화면을 다시 불러올 것 |
 
 연결하면 `retry: 5000`을 먼저 보내고, 25초마다 `: ping` 주석을 보냅니다.
-오류: `404 Topic is not found`, `503 Live updates are unavailable`(꺼져 있거나 동시 연결이 `LIVE_UPDATES_MAX_STREAMS`에 이름).
+오류: `404 Topic is not found`, `403 Topic is hidden`, `503 Live updates are unavailable`(꺼져 있거나, 동시 연결이
+`LIVE_UPDATES_MAX_STREAMS`에 이르렀거나, 한 IP에서 16개를 넘게 열었을 때).
 
 ```js
 const events = new EventSource("https://bbs-api.example.org/topics/12/events");
@@ -221,7 +225,8 @@ events.addEventListener("comment", (e) => console.log("새 의견", JSON.parse(e
 ```
 
 `comments`에는 일치한 의견 중 앞의 3개가 들어가고, `snippet`은 첫 일치 부분 주변의 일반 텍스트(Markdown 기호 제거)입니다.
-오류: `400 Empty search`, `400 Search is too long`, `400` (모르는 `in` 값).
+오류: `400 Empty search`, `400 Search is too long`, `400` (모르는 `in` 값),
+`503 Search is busy`(동시에 3개까지만 실행, 잠시 뒤 다시). `offset`은 1000까지입니다.
 
 검색은 `LIKE '%단어%'`로 표를 훑습니다. MariaDB의 FULLTEXT는 띄어쓰기로만 단어를 나눠 한국어에 맞지 않기
 때문입니다. 게시판 규모(수십만 의견 정도)에서는 충분하지만, 아주 큰 DB에서는 느려질 수 있습니다.
@@ -334,8 +339,9 @@ events.addEventListener("comment", (e) => console.log("새 의견", JSON.parse(e
 { "path": "bbs/V1StGXR8_Z5jdHi6B-myT.png", "url": "https://cdn.example.org/bbs/V1StGXR8_Z5jdHi6B-myT.png" }
 ```
 
+`Content-Type: application/json`이어야 합니다(`415 Expected JSON`). 로그인·차단 확인은 본문을 읽기 전에 합니다.
 오류: `404 Uploads are disabled`, `400`(허용되지 않는 형식, 내용이 확장자와 다름, 잘못된 base64, 빈 파일),
-`413 File is too large`, `401 LoginRequired`, `403 You are blocked`.
+`413 File is too large`, `401 LoginRequired`, `403 You are blocked`, `429 Too many posts`.
 
 ### `GET /uploads/{filename}`
 

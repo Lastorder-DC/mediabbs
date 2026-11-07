@@ -178,7 +178,7 @@ mod tests {
             assert_eq!(new_id, comments[0].id);
             assert_eq!("Test content", comments[0].content);
             assert_eq!(Some("test_author".to_owned()), comments[0].author_name);
-            assert_eq!(true, comments[0].has_ipv6());
+            assert!(comments[0].has_ipv6());
             let arr: &[u8; 16] = comments[0].author_ip[..].try_into().expect("must succeed");
             assert_eq!(ip, IpAddr::from(*arr));
 

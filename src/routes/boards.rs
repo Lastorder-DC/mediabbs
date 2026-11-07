@@ -45,9 +45,8 @@ async fn get_board_topics(
         OtherError(anyhow::Error),
     }
 
-    let limit = query.limit.unwrap_or(10);
-    let limit = if limit > 20 { 20 } else { limit };
-    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(10).clamp(1, 20);
+    let offset = query.offset.unwrap_or(0).max(0);
 
     let mut conn = pool.get()?;
     let res = block(move || {

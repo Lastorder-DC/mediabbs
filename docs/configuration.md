@@ -30,8 +30,9 @@
 | `BIND_ADDRESS` | **필수** | 수신 주소. 예: `127.0.0.1:8080`. 예전 이름 `HOST`도 인식 |
 | `DATABASE_URL` | **필수** | `mysql://사용자:비밀번호@호스트[:포트]/DB이름`. 비밀번호의 특수문자는 URL 인코딩(`@`→`%40`) |
 | `MIGRATE_ON_START` | `false` | 시작할 때 DB 마이그레이션 자동 적용. 끄면 `mediabbs migrate`로 직접 실행 |
-| `CORS_ALLOWED_ORIGINS` | (모두 허용) | 클라이언트 origin 목록. 예: `https://bbs.example.org`. 예전 이름 `CORS`(`|` 구분)도 인식. **실서비스에서는 반드시 설정** — 비워 두면 어느 사이트든 로그인 쿠키를 실어 API를 호출할 수 있습니다 |
-| `TRUST_PROXY` | loopback | `X-Forwarded-For`/`Forwarded` 헤더를 믿을 프록시. 아래 설명 참고 |
+| `CORS_ALLOWED_ORIGINS` | (없음) | 클라이언트 origin 목록. 예: `https://bbs.example.org`. 예전 이름 `CORS`(`|` 구분)도 인식. 로그인 쿠키를 실은 요청은 여기 적은 origin에만 허용됩니다. **클라이언트와 API 주소가 다르면 반드시 설정** — 비워 두면 다른 origin의 클라이언트는 로그인할 수 없습니다(쿠키 없는 요청만 허용). 같은 주소(`/api/`)로 붙인 구성에서는 비워 둬도 됩니다 |
+| `TRUST_PROXY` | loopback | 전달 헤더를 믿을 프록시. 아래 설명 참고 |
+| `FORWARDED_HEADER` | `x-forwarded-for` | 프록시가 사용자 IP를 넣는 헤더: `x-forwarded-for` 또는 `forwarded`. 이 헤더만 읽습니다(사용자가 다른 헤더로 IP를 꾸며 보내도 무시) |
 | `SENTRY_DSN` | (끔) | Sentry 오류 보고 DSN. 예전 이름 `SENTRY_URL`도 인식 |
 | `RUST_LOG` | `actix_web=info,mediabbs=info` | 로그 수준 ([env_logger](https://docs.rs/env_logger) 문법). 디버깅 시 `mediabbs=debug` |
 
@@ -47,6 +48,10 @@
 | `false` | 헤더를 쓰지 않음 — 프록시 없이 직접 노출할 때 |
 | `true` | 모든 경유지를 신뢰 — 백엔드에 프록시를 통해서만 접근할 수 있을 때만 |
 | CIDR 목록 | 예: `172.17.0.1,10.0.0.0/8,::1` |
+
+Cloudflare 같은 CDN 뒤라면 nginx에서 `real_ip`(`set_real_ip_from` + `real_ip_header CF-Connecting-IP`)로 실제
+IP를 찾고 `proxy_set_header X-Forwarded-For $remote_addr;`로 넘기는 것이 가장 간단합니다. 그렇지 않으면 모든
+비로그인 사용자가 CDN 주소로 보입니다.
 
 ---
 
@@ -135,6 +140,7 @@
 | `SITENOTICE_ENABLED` | `true` | 위키의 사이트 공지를 게시판 위에 표시 |
 | `SITENOTICE_PAGE` | `MediaWiki:Sitenotice` | 공지로 쓸 위키 문서 |
 | `BOARDS_CACHE_SECONDS` | `300` | 게시판 목록(`GET /boards`)의 브라우저 캐시 시간(초) |
+| `POSTS_PER_MINUTE` | `10` | IP 하나가 1분에 쓸 수 있는 주제·의견·업로드 수(도배 방지, 백엔드 프로세스별). `0`이면 제한 없음 |
 | `LIVE_UPDATES_MAX_STREAMS` | `1000` | 동시에 열어 둘 실시간 갱신 연결 수(열린 주제 화면 하나당 하나). 넘으면 그 화면은 10초 확인으로 대신합니다. `0`이면 실시간 갱신을 끕니다 ([설치 안내](installation.md#실시간-의견-갱신-sse)) |
 
 ### 이름공간 자동 설정
@@ -181,7 +187,7 @@ JSON 배열이며 각 항목은 링크이거나 드롭다운입니다.
 | `UPLOAD_ENABLED` | `true` | `false`면 업로드를 끄고 저장소 설정도 필요 없음 |
 | `UPLOAD_REQUIRE_LOGIN` | `true` | 로그인한 사용자만 업로드 |
 | `UPLOAD_MAX_BYTES` | `10485760` (10MiB) | 파일 하나의 최대 크기(바이트). 프록시의 요청 크기 제한은 이 값의 약 4/3 이상으로 |
-| `UPLOAD_ALLOWED_EXTENSIONS` | `png,jpg,jpeg,gif,webp` | 허용 확장자. png/jpg/gif/webp는 파일 내용도 검사함. **svg·html은 넣지 마세요**(스크립트 삽입 위험) |
+| `UPLOAD_ALLOWED_EXTENSIONS` | `png,jpg,jpeg,gif,webp` | 허용 확장자. png/jpg/gif/webp는 파일 내용도 검사함. 스크립트를 담을 수 있는 형식(svg, html, xml, js, css, pdf 등)은 넣으면 시작하지 않습니다 |
 | `STORAGE_BACKEND` | `s3` | `s3` 또는 `local` |
 | `UPLOAD_PUBLIC_URL` | AWS S3면 자동 | 저장된 파일을 브라우저가 받을 주소의 앞부분. `local`과 `S3_ENDPOINT` 사용 시 필수 |
 

@@ -3,14 +3,17 @@ use crate::config::Config;
 use crate::connection_info::ConnectionInfo;
 use crate::custom_error::CustomError;
 use crate::mediawiki::MwClient;
+use crate::rate_limit::{too_many, PostLimiter};
 use crate::storage::{content_matches_extension, is_valid_stored_name, Storage, StoredFile};
 use actix_web::{
-    get, post,
+    get,
+    http::header,
+    post,
     web::{self, Data, Path},
-    HttpResponse, Scope,
+    HttpRequest, HttpResponse, Scope,
 };
-use actix_web_validator::Json;
 use base64::Engine as _;
+use futures_util::StreamExt;
 use validator::Validate;
 
 #[derive(Deserialize, Validate, Debug)]
@@ -35,21 +38,75 @@ fn allowed_extension(filename: &str, allowed: &[String]) -> Option<String> {
     }
 }
 
+/// The largest request body: base64 is ~4/3 of the file, plus room for the JSON.
+fn body_limit(config: &Config) -> usize {
+    config.upload.max_bytes / 3 * 4 + 64 * 1024
+}
+
 #[post("")]
+#[allow(clippy::too_many_arguments)] // actix extractors
 async fn post_files(
     config: Data<Config>,
     mw: Data<MwClient>,
     storage: Data<Storage>,
+    limiter: Data<PostLimiter>,
     ConnectionInfo { ip }: ConnectionInfo,
     UserInfo { token, .. }: UserInfo,
-    Json(PostFileRequest { filename, content }): Json<PostFileRequest>,
+    request: HttpRequest,
+    mut payload: web::Payload,
 ) -> Result<HttpResponse, CustomError> {
     let upload = &config.upload;
     if !upload.enabled {
         return Ok(HttpResponse::NotFound().body("Uploads are disabled"));
     }
+    // JSON only: other content types can be sent cross-site without a CORS preflight.
+    let is_json = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.to_ascii_lowercase().starts_with("application/json"));
+    if !is_json {
+        return Ok(HttpResponse::UnsupportedMediaType().body("Expected JSON"));
+    }
+    if let Err(wait) = limiter.check(ip) {
+        return Ok(too_many(wait));
+    }
 
-    // Cheap checks first, before contacting the wiki.
+    // Who is uploading, before reading a body of up to several megabytes.
+    match token {
+        Some(token) => {
+            if mw.profile(&token).await?.blocked {
+                return Ok(HttpResponse::Forbidden().body("You are blocked"));
+            }
+        }
+        None if upload.require_login => {
+            return Ok(HttpResponse::Unauthorized().body("LoginRequired"));
+        }
+        None => {
+            if mw.is_ip_blocked(&ip).await? {
+                return Ok(HttpResponse::Forbidden().body("You are blocked"));
+            }
+        }
+    }
+
+    let limit = body_limit(&config);
+    let mut body = web::BytesMut::new();
+    while let Some(chunk) = payload.next().await {
+        let Ok(chunk) = chunk else {
+            return Ok(HttpResponse::BadRequest().body("Invalid request body"));
+        };
+        if body.len() + chunk.len() > limit {
+            return Ok(HttpResponse::PayloadTooLarge().body("File is too large"));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let PostFileRequest { filename, content } =
+        match serde_json::from_slice::<PostFileRequest>(&body) {
+            Ok(req) if req.validate().is_ok() => req,
+            _ => return Ok(HttpResponse::BadRequest().body("Invalid request body")),
+        };
+    drop(body);
+
     let ext = match allowed_extension(&filename, &upload.allowed_extensions) {
         Some(ext) => ext,
         None => {
@@ -71,22 +128,6 @@ async fn post_files(
     }
     if !content_matches_extension(&bytes, &ext) {
         return Ok(HttpResponse::BadRequest().body("File content does not match its extension"));
-    }
-
-    match token {
-        Some(token) => {
-            if mw.profile(&token).await?.blocked {
-                return Ok(HttpResponse::Forbidden().body("You are blocked"));
-            }
-        }
-        None if upload.require_login => {
-            return Ok(HttpResponse::Unauthorized().body("LoginRequired"));
-        }
-        None => {
-            if mw.is_ip_blocked(&ip).await? {
-                return Ok(HttpResponse::Forbidden().body("You are blocked"));
-            }
-        }
     }
 
     let stored: StoredFile = storage.save(bytes, &ext).await?;
@@ -123,11 +164,8 @@ async fn get_upload(
         .body(bytes))
 }
 
-pub fn scope(config: &Config) -> Scope {
-    // Base64 is ~4/3 of the original size, plus some room for the JSON envelope.
-    let limit = config.upload.max_bytes / 3 * 4 + 64 * 1024;
-    let json_cfg = actix_web_validator::JsonConfig::default().limit(limit);
-    web::scope("/files").app_data(json_cfg).service(post_files)
+pub fn scope(_config: &Config) -> Scope {
+    web::scope("/files").service(post_files)
 }
 
 pub fn uploads_scope() -> Scope {
@@ -169,7 +207,7 @@ mod tests {
         test::TestRequest::post()
             .uri("/files")
             .peer_addr("203.0.113.5:1234".parse().unwrap())
-            .set_json(&serde_json::json!({
+            .set_json(serde_json::json!({
                 "filename": filename,
                 "content": base64::engine::general_purpose::STANDARD.encode(bytes),
             }))
@@ -182,6 +220,7 @@ mod tests {
                 .app_data(Data::from(config.clone()))
                 .app_data(Data::new(MwClient::new(config.clone())))
                 .app_data(Data::new(Storage::new(config.clone()).unwrap()))
+                .app_data(Data::new(PostLimiter::new(0)))
                 .service(scope(&config))
                 .service(uploads_scope()),
         )
@@ -229,12 +268,28 @@ mod tests {
                 .app_data(Data::from(config.clone()))
                 .app_data(Data::new(MwClient::new(config.clone())))
                 .app_data(Data::new(Storage::new(config.clone()).unwrap()))
+                .app_data(Data::new(PostLimiter::new(2)))
                 .service(scope(&config)),
         )
         .await;
         let res = test::call_service(&app, post("x.png", PNG).to_request()).await;
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(test::read_body(res).await, "LoginRequired");
+        // Refused before the body is read, whatever its size.
+        let big = vec![0x89u8; 4096];
+        let res = test::call_service(&app, post("x.png", &big).to_request()).await;
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        let res = test::call_service(&app, post("x.png", PNG).to_request()).await;
+        assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+        // No CORS-simple content types (cross-site forms).
+        let req = test::TestRequest::post()
+            .uri("/files")
+            .peer_addr("203.0.113.6:1234".parse().unwrap())
+            .insert_header(("content-type", "text/plain"))
+            .set_payload(r#"{"filename":"x.png","content":""}"#)
+            .to_request();
+        let res = test::call_service(&app, req).await;
+        assert_eq!(res.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 
     #[actix_web::test]
