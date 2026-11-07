@@ -154,6 +154,17 @@ async function login(browser, user, pass) {
   check("No Liberty styles in the Simple skin", !libertyCss);
   await page.goto(topicUrl, { waitUntil: "networkidle" });
   await page.waitForSelector(".simple-topic .toastui-editor-defaultUI");
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.waitForTimeout(300);
+    const fits = await page.evaluate(() => {
+      const box = document.querySelector(".simple-topic .s-compose").getBoundingClientRect();
+      const ed = document.querySelector(".simple-topic .toastui-editor-defaultUI").getBoundingClientRect();
+      return ed.left >= box.left && ed.right <= box.right;
+    });
+    check(`Simple editor stays inside its box (${width}px)`, fits);
+  }
+  await page.setViewportSize({ width: 1280, height: 720 });
   await typeInEditor(page, "심플 스킨 의견");
   await page.click(".simple-topic .submit-button");
   await page.waitForFunction(() => document.querySelectorAll(".s-comment").length === 3, null, { timeout: 10000 });
