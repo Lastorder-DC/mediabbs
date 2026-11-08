@@ -2304,7 +2304,7 @@ dependencies = [
 
 [[package]]
 name = "mediabbs"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "actix-cors",
  "actix-rt",

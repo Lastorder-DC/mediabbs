@@ -268,7 +268,7 @@ events.addEventListener("comment", (e) => console.log("새 의견", JSON.parse(e
 | `PUT /admin/boards-order` | 메뉴 순서 바꾸기 | `Board[]`, `400 Every board must be listed once` |
 | `PUT /admin/menus` | 스킨별 메뉴 저장 | `{ "menus": … }`, `400 Invalid menu: …` |
 | `GET /admin/logs` | 관리 기록 (최신순) | 아래 참고, `400 Invalid log type` |
-| `GET /admin/version` | 백엔드 버전 `{"version": "0.3.0-1a2b3c4"}` (릴리즈 태그 빌드는 `"0.3.0"`) | `200` |
+| `GET /admin/version` | 백엔드 버전 `{"version": "0.4.0-1a2b3c4"}` (릴리즈 태그 빌드는 `"0.4.0"`) | `200` |
 
 게시판 만들기·바꾸기 (모든 필드 필요):
 

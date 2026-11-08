@@ -1,5 +1,5 @@
 //! Sets `MEDIABBS_VERSION`: the crate version, plus `-<7-char commit hash>`
-//! for builds that are not of a release tag ("0.3.0-1a2b3c4", "0.3.0").
+//! for builds that are not of a release tag ("0.4.0-1a2b3c4", "0.4.0").
 //!
 //! The hash comes from the `MEDIABBS_GIT_HASH` environment variable when set
 //! (Docker builds have no `.git`; pass it with `--build-arg`), else from git.

@@ -23,7 +23,7 @@ docker compose up -d --build
 docker compose logs -f wiki backend   # first start installs the wiki (~30 s)
 ```
 
-The admin page's version tab shows plain versions ("0.3.0") unless the commit
+The admin page's version tab shows plain versions ("0.4.0") unless the commit
 hashes are passed in (images have no `.git`):
 
 ```sh
