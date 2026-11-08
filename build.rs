@@ -1,10 +1,10 @@
-//! Sets `MEDIABBS_VERSION`: the crate version, plus `-<7-char commit hash>`
-//! for builds that are not of a release tag ("0.4.0-1a2b3c4", "0.4.0").
+//! Sets `MEDIABBS_VERSION`: the crate version plus `-<7-char commit hash>`
+//! ("0.4.0-1a2b3c4"), or the plain version ("0.4.0") for release packages.
 //!
-//! The hash comes from the `MEDIABBS_GIT_HASH` environment variable when set
-//! (Docker builds have no `.git`; pass it with `--build-arg`), else from git.
-//! An empty `MEDIABBS_GIT_HASH`, a release tag (`git describe --exact-match`)
-//! or no git at all gives the plain version.
+//! - `MEDIABBS_GIT_HASH` set (Docker builds, which have no `.git`; pass it
+//!   with `--build-arg`): that hash, or the plain version when empty.
+//! - Otherwise a git checkout always shows its commit, even on a release tag:
+//!   only a release tarball (no git) or release image gives the plain version.
 
 use std::process::Command;
 
@@ -30,11 +30,7 @@ fn main() {
                 }
                 println!("cargo:rerun-if-changed={dir}/packed-refs");
             }
-            if git(&["describe", "--tags", "--exact-match", "HEAD"]).is_some() {
-                None
-            } else {
-                git(&["rev-parse", "--short=7", "HEAD"])
-            }
+            git(&["rev-parse", "--short=7", "HEAD"])
         }
     };
     let hash: String = hash

@@ -309,8 +309,8 @@ async fn get_logs(
         .json(LogsResponse { logs, has_more }))
 }
 
-/// The backend version: "0.4.0", or "0.4.0-1a2b3c4" when not built from a
-/// release tag (see build.rs).
+/// The backend version: "0.4.0-1a2b3c4", or "0.4.0" for release packages
+/// (see build.rs).
 pub const VERSION: &str = env!("MEDIABBS_VERSION");
 
 #[get("/version")]
