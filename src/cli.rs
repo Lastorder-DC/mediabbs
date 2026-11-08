@@ -99,7 +99,7 @@ fn execute(args: &[&str]) -> Result<()> {
             Ok(())
         }
         ["version"] | ["-V"] | ["--version"] => {
-            println!("mediabbs {}", env!("CARGO_PKG_VERSION"));
+            println!("mediabbs {}", env!("MEDIABBS_VERSION"));
             Ok(())
         }
         ["migrate"] => {

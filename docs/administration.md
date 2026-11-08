@@ -152,12 +152,16 @@ ORDER BY l.id DESC LIMIT 50;
 ## 업그레이드
 
 ```sh
-cd mediabbs && git pull
+# 릴리즈 파일: 새 tar.gz를 풀고 실행 파일만 바꿉니다
+sudo install mediabbs-*-linux-amd64/mediabbs /opt/mediabbs/mediabbs
+cd /opt/mediabbs && sudo -u mediabbs ./mediabbs migrate && sudo systemctl restart mediabbs
 # 직접 빌드
+cd mediabbs && git pull
 cargo build --release && sudo install target/release/mediabbs /opt/mediabbs/mediabbs
 cd /opt/mediabbs && sudo -u mediabbs ./mediabbs migrate && sudo systemctl restart mediabbs
-# Docker
-docker build -t mediabbs . && docker run --rm --env-file mediabbs.env mediabbs migrate
+# Docker (GitHub Packages 이미지)
+docker pull ghcr.io/lastorder-dc/mediabbs:latest && docker tag ghcr.io/lastorder-dc/mediabbs:latest mediabbs
+docker run --rm --env-file mediabbs.env mediabbs migrate
 docker rm -f mediabbs && docker run -d --name mediabbs ... mediabbs
 ```
 

@@ -1,0 +1,244 @@
+# Release builds: Linux tar.gz (amd64, arm64) and a multi-arch Docker image on
+# GitHub Packages (ghcr.io/<owner>/mediabbs).
+#
+# - Tag vX.Y.Z: image tags X.Y.Z (and `latest` if this is the newest release,
+#   not for pre-releases like vX.Y.Z-rc.1); tarballs go to the GitHub release
+#   (created if missing). Shows the plain version ("0.4.0").
+# - Push to main: image tag `nightly`; tarballs are kept as workflow artifacts.
+#   Shows the version with the commit ("0.4.0-1a2b3c4").
+# - Run manually with a tag to (re)build that release, or without to build main.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    # Not evaluated for tag pushes.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "dev/**"
+      - ".github/FUNDING.yml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v0.4.0); empty = nightly from main"
+        required: false
+        default: ""
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' && !github.event.inputs.tag }}
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      ref: ${{ steps.info.outputs.ref }}
+      release: ${{ steps.info.outputs.release }}
+      prerelease: ${{ steps.info.outputs.prerelease }}
+      version: ${{ steps.info.outputs.version }}
+      hash: ${{ steps.info.outputs.hash }}
+      image: ${{ steps.info.outputs.image }}
+      tags: ${{ steps.info.outputs.tags }}
+      sha: ${{ steps.info.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+      - id: info
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -eu
+          if [ -n "$INPUT_TAG" ]; then ref="$INPUT_TAG"
+          elif [ "$GITHUB_REF_TYPE" = tag ]; then ref="$GITHUB_REF_NAME"
+          else ref="$(git rev-parse HEAD)"; fi
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if printf '%s' "$ref" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            version="${ref#v}"
+            if [ "${version%%-*}" != "$crate" ]; then
+              echo "::error::Tag $ref does not match Cargo.toml version $crate"; exit 1
+            fi
+            release=true; hash=""; tags="$image:$version"
+            case "$version" in *-*) prerelease=true ;; *) prerelease=false ;; esac
+            # `latest` = the newest final release, so tagging an older patch
+            # release later does not move it back.
+            newest=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+            if [ "$prerelease" = false ] && [ "$newest" = "$ref" ]; then tags="$tags $image:latest"; fi
+          elif [ "$GITHUB_REF_TYPE" = tag ] && [ -z "$INPUT_TAG" ]; then
+            echo "::error::Not a release tag: $ref"; exit 1
+          else
+            hash=$(git rev-parse --short=7 HEAD)
+            version="$crate-$hash"; release=false; prerelease=false; tags="$image:nightly"
+          fi
+          {
+            echo "ref=$ref"; echo "release=$release"; echo "prerelease=$prerelease"
+            echo "version=$version"; echo "hash=$hash"; echo "image=$image"; echo "tags=$tags"
+            echo "sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          echo "### $version" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image tags: \`$tags\`" >> "$GITHUB_STEP_SUMMARY"
+
+  tarball:
+    needs: prepare
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # Debian 12: the binary runs on glibc 2.36+ (Debian 12+, Ubuntu 24.04+)
+    # and links libmariadb3 and libssl3.
+    container: rust:1-bookworm
+    env:
+      MEDIABBS_GIT_HASH: ${{ needs.prepare.outputs.hash }}
+      NAME: mediabbs-${{ needs.prepare.outputs.version }}-linux-${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - run: |
+          apt-get update
+          apt-get install -y --no-install-recommends default-libmysqlclient-dev pkg-config libssl-dev
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/cargo/registry
+            target
+          key: tarball-${{ matrix.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: tarball-${{ matrix.arch }}-
+      - run: cargo build --release --locked
+      - name: Package
+        run: |
+          set -eu
+          mkdir -p "dist/$NAME"
+          cp target/release/mediabbs LICENSE README.md .env.example "dist/$NAME/"
+          cp -r docs contrib "dist/$NAME/"
+          tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
+          (cd dist && sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256")
+          "dist/$NAME/mediabbs" --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball-${{ matrix.arch }}
+          path: dist/*.tar.gz*
+          retention-days: ${{ needs.prepare.outputs.release == 'true' && 7 || 30 }}
+
+  docker:
+    needs: prepare
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          build-args: MEDIABBS_GIT_HASH=${{ needs.prepare.outputs.hash }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.sha }}
+            org.opencontainers.image.licenses=MIT
+          outputs: type=image,name=${{ needs.prepare.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          cache-to: type=gha,scope=docker-${{ matrix.arch }},mode=max
+      - run: |
+          mkdir -p digests
+          touch "digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: digests/*
+          retention-days: 1
+
+  docker-manifest:
+    needs: [prepare, docker]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the multi-arch image
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          TAGS: ${{ needs.prepare.outputs.tags }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -eu
+          args=""
+          for tag in $TAGS; do args="$args -t $tag"; done
+          # shellcheck disable=SC2086,SC2046
+          docker buildx imagetools create $args \
+            --annotation "index:org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --annotation "index:org.opencontainers.image.description=MediaBBS: a bulletin board for MediaWiki accounts" \
+            --annotation "index:org.opencontainers.image.version=$VERSION" \
+            --annotation "index:org.opencontainers.image.licenses=MIT" \
+            $(cd digests && printf "$IMAGE@sha256:%s " *)
+          for tag in $TAGS; do docker buildx imagetools inspect "$tag"; done
+
+  release:
+    needs: [prepare, tarball, docker-manifest]
+    if: needs.prepare.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tarball-*
+          path: dist
+          merge-multiple: true
+      - name: Attach the tarballs to the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ needs.prepare.outputs.ref }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          set -eu
+          if ! gh release view "$REF" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            flags="--verify-tag --generate-notes"
+            [ "$PRERELEASE" = true ] && flags="$flags --prerelease"
+            # shellcheck disable=SC2086
+            gh release create "$REF" -R "$GITHUB_REPOSITORY" --title "MediaBBS $VERSION" $flags
+          fi
+          gh release upload "$REF" dist/* -R "$GITHUB_REPOSITORY" --clobber

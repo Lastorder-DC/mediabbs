@@ -23,7 +23,7 @@ MediaBBS를 실제 서비스에 설치하는 과정입니다. 순서대로 진�
 |---|---|
 | MediaWiki | Extension:OAuth의 OAuth 2.0을 쓸 수 있는 버전 (MediaWiki 1.35 이상, **1.43 LTS에서 검증**). 위키 서버 관리자 권한 |
 | 데이터베이스 | MySQL 5.7+ 또는 MariaDB 10.3+ (utf8mb4) |
-| 백엔드 실행 환경 | Linux. Docker, 또는 직접 빌드 시 Rust 1.94 이상과 `libmysqlclient`/`libmariadb`, OpenSSL |
+| 백엔드 실행 환경 | Linux (amd64/arm64). Docker, 릴리즈 파일(Debian 12+ / Ubuntu 24.04+), 또는 직접 빌드 시 Rust 1.94 이상과 `libmysqlclient`/`libmariadb`, OpenSSL |
 | 클라이언트 | 정적 파일을 서빙할 웹 서버(nginx 등), Docker, 또는 GitHub Pages |
 | HTTPS | 실서비스에서는 필수 (로그인 쿠키에 `Secure`가 기본 적용됨) |
 | 업로드 저장소 (선택) | AWS S3, S3 호환 스토리지, 또는 백엔드 서버의 디스크 |
@@ -171,9 +171,24 @@ GRANT ALL PRIVILEGES ON mediabbs.* TO 'mediabbs'@'localhost';
 
 ## 4. 백엔드 설치
 
-Docker와 직접 빌드 중 하나를 고르세요.
+Docker와 릴리즈 파일(또는 직접 빌드) 중 하나를 고르세요.
 
 ### 4.1 방법 1: Docker
+
+GitHub Packages에 amd64/arm64 이미지가 있습니다.
+
+| 태그 | 내용 |
+|---|---|
+| `latest` | 가장 최근 릴리즈 |
+| 버전 번호 (예: `0.4.0`) | 그 릴리즈 |
+| `nightly` | `main` 브랜치의 최신 커밋 (개발 중인 버전) |
+
+```sh
+docker pull ghcr.io/lastorder-dc/mediabbs:latest
+docker tag ghcr.io/lastorder-dc/mediabbs:latest mediabbs   # 아래 예시의 이미지 이름
+```
+
+직접 이미지를 만들 수도 있습니다.
 
 ```sh
 git clone https://github.com/Lastorder-DC/mediabbs.git
@@ -211,7 +226,23 @@ docker run --rm --env-file /etc/mediabbs/mediabbs.env mediabbs board list
 > 또 호스트의 nginx를 거쳐 들어오는 요청은 Docker 게이트웨이 주소에서 오므로, 실제 사용자 IP를
 > 얻으려면 `TRUST_PROXY`에 그 주소(예: `172.17.0.1`)를 넣어야 합니다.
 
-### 4.2 방법 2: 직접 빌드
+### 4.2 방법 2: 릴리즈 파일 또는 직접 빌드
+
+**릴리즈 파일**: [릴리즈 페이지](https://github.com/Lastorder-DC/mediabbs/releases)에서
+`mediabbs-<버전>-linux-amd64.tar.gz`(ARM 서버는 `-linux-arm64`)를 받습니다. Debian 12 이상, Ubuntu 24.04 이상에서
+실행됩니다.
+
+```sh
+sudo apt install libmariadb3 libssl3   # Ubuntu 24.04는 libssl3t64
+tar xzf mediabbs-*-linux-amd64.tar.gz
+sudo useradd --system --home /opt/mediabbs mediabbs
+sudo install -D mediabbs-*-linux-amd64/mediabbs /opt/mediabbs/mediabbs
+```
+
+압축 파일에는 실행 파일과 함께 `.env.example`, 문서(`docs/`), `contrib/`가 들어 있습니다.
+같은 이름의 `.sha256` 파일로 내려받은 파일을 확인할 수 있습니다(`sha256sum -c`).
+
+**직접 빌드**:
 
 ```sh
 # Debian/Ubuntu
@@ -234,7 +265,7 @@ sudo install -D target/release/mediabbs /opt/mediabbs/mediabbs
 
 | 설치 방법 | 설정 파일 위치 |
 |---|---|
-| 직접 빌드 | **`/opt/mediabbs/.env`** — 서버와 CLI 명령 모두 작업 디렉터리의 `.env`를 자동으로 읽습니다 |
+| 릴리즈 파일·직접 빌드 | **`/opt/mediabbs/.env`** — 서버와 CLI 명령 모두 작업 디렉터리의 `.env`를 자동으로 읽습니다 |
 | Docker | 아무 곳 (예: `/etc/mediabbs/mediabbs.env`) — `--env-file`로 넘깁니다 |
 
 구성 A 기준 최소 예시:
@@ -293,7 +324,7 @@ Docker라면 `docker run --rm --env-file /etc/mediabbs/mediabbs.env mediabbs mig
 
 `MIGRATE_ON_START=true`를 설정하면 서버가 시작할 때 마이그레이션을 자동으로 적용합니다.
 
-### 4.5 서비스로 등록 (직접 빌드)
+### 4.5 서비스로 등록 (릴리즈 파일·직접 빌드)
 
 ```ini
 # /etc/systemd/system/mediabbs.service
