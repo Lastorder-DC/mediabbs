@@ -6,9 +6,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends default-libmysqlclient-dev pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY migrations ./migrations
 COPY src ./src
+# Commit hash shown in the version ("0.3.0-1a2b3c4"); there is no .git in the
+# image. Leave it out (or empty) for release builds: plain "0.3.0".
+#   docker build --build-arg MEDIABBS_GIT_HASH=$(git rev-parse --short=7 HEAD) .
+ARG MEDIABBS_GIT_HASH=
 RUN cargo build --release --locked
 
 # ---- runtime ----

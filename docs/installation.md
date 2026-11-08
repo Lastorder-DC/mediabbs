@@ -181,6 +181,12 @@ cd mediabbs
 docker build -t mediabbs .
 ```
 
+관리 페이지의 "버전" 탭은 `0.3.0-1a2b3c4`(커밋 해시 7자리)처럼 표시하고, 릴리즈 태그에서 빌드했거나 git 정보가 없으면 `0.3.0`처럼 표시합니다. 이미지에는 `.git`이 들어가지 않으므로, 개발 중인 커밋을 표시하려면 빌드할 때 해시를 넘깁니다(넘기지 않으면 `0.3.0`).
+
+```sh
+docker build --build-arg MEDIABBS_GIT_HASH=$(git rev-parse --short=7 HEAD) -t mediabbs .
+```
+
 설정 파일(4.3)을 만든 뒤 실행합니다.
 
 ```sh
@@ -361,6 +367,8 @@ docker run -d --name mediabbs-client --restart unless-stopped \
   -p 127.0.0.1:8081:80 \
   mediabbs-client
 ```
+
+버전 표시용 커밋 해시도 백엔드와 같은 방법으로 넘깁니다(`--build-arg MEDIABBS_GIT_HASH=$(git rev-parse --short=7 HEAD)`). 소스에서 빌드하면(`yarn build`) git에서 직접 읽습니다.
 
 컨테이너가 시작할 때 `BACKEND_HOST`로 `config.js`를 만듭니다. 기본 스킨(`SKIN`), 고를 수 있는 스킨
 목록(`SKINS`), 테마 색(`PRIMARY_COLOR`), 스킨별 상단 메뉴(`MENUS`)도 환경 변수로 줄 수 있습니다.

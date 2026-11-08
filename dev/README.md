@@ -23,6 +23,15 @@ docker compose up -d --build
 docker compose logs -f wiki backend   # first start installs the wiki (~30 s)
 ```
 
+The admin page's version tab shows plain versions ("0.3.0") unless the commit
+hashes are passed in (images have no `.git`):
+
+```sh
+MEDIABBS_GIT_HASH=$(git rev-parse --short=7 HEAD) \
+MEDIABBS_CLIENT_GIT_HASH=$(git -C ../../mediabbs-client rev-parse --short=7 HEAD) \
+docker compose up -d --build
+```
+
 Open http://127.0.0.1:18090 and log in with one of the test accounts:
 
 | User | Password | Notes |

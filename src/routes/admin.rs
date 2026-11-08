@@ -309,6 +309,21 @@ async fn get_logs(
         .json(LogsResponse { logs, has_more }))
 }
 
+/// The backend version: "0.3.0", or "0.3.0-1a2b3c4" when not built from a
+/// release tag (see build.rs).
+pub const VERSION: &str = env!("MEDIABBS_VERSION");
+
+#[get("/version")]
+async fn get_version(
+    mw: Data<MwClient>,
+    UserInfo { token, .. }: UserInfo,
+) -> Result<HttpResponse, CustomError> {
+    admin!(token, mw);
+    Ok(HttpResponse::Ok()
+        .insert_header(("Cache-Control", "no-store"))
+        .json(serde_json::json!({ "version": VERSION })))
+}
+
 pub fn scope() -> Scope {
     web::scope("/admin")
         .service(create_board)
@@ -317,4 +332,5 @@ pub fn scope() -> Scope {
         .service(reorder_boards)
         .service(put_menus)
         .service(get_logs)
+        .service(get_version)
 }

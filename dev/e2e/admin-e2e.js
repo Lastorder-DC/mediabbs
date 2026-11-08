@@ -233,6 +233,16 @@ const libertyBoardsMenu = async (page) => {
   check("Log tab filters by kind", boardActions.length > 0 && boardActions.every((a) => a.includes("게시판")), boardActions.slice(0, 5).join(","));
   check("Log tab links to the board", (await page.locator(`.mb-log-row a[href="/${name}"]`).count()) > 0);
 
+  // --- version tab ---
+  const VERSION = /^\d+\.\d+\.\d+(-[0-9a-zA-Z]{7})?$/;
+  const apiVersion = (await api(page, "GET", "/admin/version")).json?.version;
+  check("Version API (admins)", VERSION.test(apiVersion || ""), apiVersion);
+  check("Anonymous: version API refuses", (await api(anon.page, "GET", "/admin/version")).status === 401);
+  await page.click(".mb-tab >> text=버전");
+  await page.waitForSelector(".mb-version-backend");
+  const shown = { backend: await page.textContent(".mb-version-backend"), frontend: await page.textContent(".mb-version-frontend") };
+  check("Version tab shows both versions", shown.backend === apiVersion && VERSION.test(shown.frontend), JSON.stringify(shown));
+
   // Leave the test board out of the way for other tests: last, hidden.
   boards = (await api(page, "GET", "/boards")).json;
   const ids = boards.map((b) => b.id).filter((id) => id !== created.id).concat(created.id);
