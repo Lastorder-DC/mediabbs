@@ -142,14 +142,16 @@ mediabbs-client가 쓰는 REST API입니다. 모든 엔드포인트는 `/v1` 접
 | 메서드·경로 | 설명 | 응답 |
 |---|---|---|
 | `GET /boards` | 게시판 목록, 메뉴 순서대로 (`isListed=false` 포함) | `Board[]` |
-| `GET /boards/{boardId}/topics?offset=&limit=` | 주제 목록. 상단 고정 → 최근 갱신 순, 숨긴 주제 제외. `limit` 기본 10, 최대 20 | `Topic[]`, `404` |
-| `GET /topics/{topicId}` | 주제 하나 | `Topic`, `403 Topic is hidden`, `404` |
-| `GET /topics/{topicId}/comments?offset=&limit=` | 의견 목록, 작성순. `limit` 기본 10, 최대 20 | `Comment[]` |
+| `GET /boards/{boardId}/topics?offset=&limit=&showHidden=` | 주제 목록. 상단 고정 → 최근 갱신 순, 숨긴 주제 제외(`showHidden=true`: 관리자만, 숨긴 주제 포함). `limit` 기본 10, 최대 20 | `Topic[]`, `404` |
+| `GET /topics/{topicId}?showHidden=` | 주제 하나. 숨긴 주제는 `showHidden=true`(관리자만)일 때만 | `Topic`, `403 Topic is hidden`, `404` |
+| `GET /topics/{topicId}/comments?offset=&limit=&showHidden=` | 의견 목록, 작성순. `limit` 기본 10, 최대 20. 숨긴 주제는 `showHidden=true`(관리자만)일 때만; 숨긴 의견의 내용은 여기서도 비어 있음 | `Comment[]`, `403 Topic is hidden` |
 | `POST /topics` | 주제 작성 | `Topic` |
 | `POST /topics/{topicId}/comments` | 의견 작성 | `204` |
 | `GET /comments/{commentId}?showHidden=true` | 의견 하나. `showHidden`은 관리자만. 숨긴 주제의 의견은 `403 Topic is hidden` | `Comment` |
 
 `GET /topics/{id}`와 의견 목록은 `ETag`를 보내며 `If-None-Match`에 `304`로 답합니다.
+
+`showHidden=true`는 관리자가 숨긴 주제를 열어 숨김을 해제할 수 있게 하는 용도입니다. 관리자가 아니면 `401 TokenMissing` / `403 Admin only`이고, 이런 응답에는 `Cache-Control: private, no-store`가 붙습니다. 숨긴 주제는 실시간 갱신(`/events`)을 받지 않으므로 클라이언트는 폴링합니다.
 
 ### `POST /topics`
 

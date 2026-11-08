@@ -172,6 +172,8 @@ async function login(browser, user, pass) {
   const unpin = await admin.page.waitForSelector(".admin-tools >> text=상단 고정 해제", { state: "visible", timeout: 5000 }).then(() => true, () => false);
   check("Admin menu now offers unpin", unpin);
   await admin.page.keyboard.press("Escape");
+  // Unpin again so test topics do not pile up at the top of the board.
+  await api(admin.page, "PUT", `/topics/${topicId}/status`, { isPinned: false });
 
   // --- language switch ---
   await page.goto(BBS + "/free", { waitUntil: "networkidle" });

@@ -81,6 +81,7 @@ async function loginAs(browser, user, pass) {
   check("Alice: cannot view hidden comment", anonView.status === 403, String(anonView.status));
   const pin = await api(admin.page, "PUT", `/topics/${topic.json.id}/status`, { isPinned: true });
   check("Admin: pin topic", pin.status === 200 && pin.json.isPinned === true, String(pin.status));
+  await api(admin.page, "PUT", `/topics/${topic.json.id}/status`, { isPinned: false }); // keep the board tidy
 
   // --- Moderator (boardmanager group via ADMIN_GROUPS) ---
   const mod = await loginAs(browser, "Moderator", PW);

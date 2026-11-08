@@ -1,5 +1,6 @@
 use std::net::IpAddr;
 
+use super::{check_show_hidden, no_store};
 use crate::auth::UserInfo;
 use crate::connection_info::ConnectionInfo;
 use crate::custom_error::CustomError;
@@ -33,14 +34,8 @@ async fn get_comment(
 ) -> Result<HttpResponse, CustomError> {
     let comment_id = comment_id.into_inner();
     let show_hidden = query.show_hidden.unwrap_or(false);
-    if show_hidden {
-        let profile = match token {
-            Some(token) => mw.profile(&token).await?,
-            None => return Ok(HttpResponse::Unauthorized().body("TokenMissing")),
-        };
-        if !profile.is_admin() {
-            return Ok(HttpResponse::Forbidden().finish());
-        }
+    if let Some(response) = check_show_hidden(show_hidden, token, &mw).await? {
+        return Ok(response);
     }
     let mut conn = pool.get()?;
     let found = block(move || -> Option<(Comment, bool)> {
@@ -54,7 +49,14 @@ async fn get_comment(
     match found {
         // Comments of a hidden topic are hidden with it (admins: `showHidden`).
         Some((_, true)) if !show_hidden => Ok(HttpResponse::Forbidden().body("Topic is hidden")),
-        Some((comment, _)) => Ok(HttpResponse::Ok().json(comment.get_public(show_hidden))),
+        Some((comment, _)) => {
+            let response = HttpResponse::Ok().json(comment.get_public(show_hidden));
+            Ok(if show_hidden {
+                no_store(response)
+            } else {
+                response
+            })
+        }
         None => Ok(HttpResponse::NotFound().body("Comment is not found")),
     }
 }

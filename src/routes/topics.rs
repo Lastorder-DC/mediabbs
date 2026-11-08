@@ -1,5 +1,6 @@
 use std::net::IpAddr;
 
+use super::{check_show_hidden, no_store};
 use crate::auth::{Profile, UserInfo};
 use crate::connection_info::ConnectionInfo;
 use crate::custom_error::CustomError;
@@ -21,17 +22,33 @@ use derive_more::Display;
 use diesel::{Connection, MysqlConnection};
 use validator::Validate;
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct ShowHiddenQuery {
+    /// Show a hidden topic (board administrators only).
+    show_hidden: Option<bool>,
+}
+
 #[get("{topic_id}")]
 async fn get_topic(
     pool: Data<DbPool>,
+    mw: Data<MwClient>,
+    UserInfo { token, .. }: UserInfo,
     topic_id: Path<i32>,
+    query: Query<ShowHiddenQuery>,
     request: HttpRequest,
 ) -> Result<HttpResponse, CustomError> {
     let topic_id = topic_id.into_inner();
+    let show_hidden = query.show_hidden.unwrap_or(false);
+    if let Some(response) = check_show_hidden(show_hidden, token, &mw).await? {
+        return Ok(response);
+    }
     let mut conn = pool.get()?;
     match block(move || Topic::find_by_id(&mut conn, topic_id)).await? {
         Ok(topic) => {
-            if topic.is_hidden {
+            if show_hidden {
+                Ok(no_store(HttpResponse::Ok().json(topic.get_public())))
+            } else if topic.is_hidden {
                 Ok(HttpResponse::Forbidden().body("Topic is hidden"))
             } else {
                 Ok(topic.get_public().cache_response(&request))
@@ -172,19 +189,29 @@ async fn put_topic_status(
 }
 
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct GetCommentsQuery {
     limit: Option<i32>,
     offset: Option<i32>,
+    /// Comments of a hidden topic (board administrators only). Hidden
+    /// comments stay hidden; fetch them one by one with `/comments/{id}`.
+    show_hidden: Option<bool>,
 }
 
 #[get("{topic_id}/comments")]
 async fn get_topic_comments(
     pool: Data<DbPool>,
+    mw: Data<MwClient>,
+    UserInfo { token, .. }: UserInfo,
     topic_id: Path<i32>,
     query: Query<GetCommentsQuery>,
     request: HttpRequest,
 ) -> Result<HttpResponse, CustomError> {
     let topic_id = topic_id.into_inner();
+    let show_hidden = query.show_hidden.unwrap_or(false);
+    if let Some(response) = check_show_hidden(show_hidden, token, &mw).await? {
+        return Ok(response);
+    }
     #[derive(Debug, Display)]
     enum ErrorKind {
         TopicNotFound,
@@ -198,7 +225,7 @@ async fn get_topic_comments(
     let mut conn = pool.get()?;
     let res = block(move || {
         if let Ok(topic) = Topic::find_by_id(&mut conn, topic_id) {
-            if topic.is_hidden {
+            if topic.is_hidden && !show_hidden {
                 return Err(ErrorKind::TopicIsHidden);
             }
             let comments = topic
@@ -216,7 +243,11 @@ async fn get_topic_comments(
                 .iter()
                 .map(|x| x.get_public(false))
                 .collect::<Vec<CommentPublic>>();
-            Ok(comments.cache_response(&request))
+            if show_hidden {
+                Ok(no_store(HttpResponse::Ok().json(comments)))
+            } else {
+                Ok(comments.cache_response(&request))
+            }
         }
         Err(ErrorKind::TopicNotFound) => Ok(HttpResponse::NotFound().body("Topic is not found")),
         Err(ErrorKind::TopicIsHidden) => Ok(HttpResponse::Forbidden().body("Topic is hidden")),

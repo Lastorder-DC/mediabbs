@@ -18,20 +18,7 @@ use actix_web::{
 };
 use std::net::IpAddr;
 
-/// The logged-in board administrator, or the response to send instead.
-async fn require_admin(
-    token: Option<String>,
-    mw: &MwClient,
-) -> Result<Result<Profile, HttpResponse>, CustomError> {
-    let Some(token) = token else {
-        return Ok(Err(HttpResponse::Unauthorized().body("TokenMissing")));
-    };
-    let profile = mw.profile(&token).await?;
-    if !profile.is_admin() {
-        return Ok(Err(HttpResponse::Forbidden().body("Admin only")));
-    }
-    Ok(Ok(profile))
-}
+use super::require_admin;
 
 macro_rules! admin {
     ($token:expr, $mw:expr) => {

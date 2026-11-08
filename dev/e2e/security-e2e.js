@@ -83,6 +83,43 @@ async function login(browser, user, pass) {
   check("Hidden topic: its comments cannot be read one by one", (await api(page, "GET", `/comments/${comments[0].id}`)).status === 403);
   check("Hidden topic: admins still can (showHidden)", (await api(admin.page, "GET", `/comments/${comments[0].id}?showHidden=true`)).status === 200);
   check("Hidden topic: no live-update stream", (await api(page, "GET", `/topics/${topic.id}/events`)).status === 403);
+  check("Hidden topic: not in the list", !(await api(page, "GET", "/boards/1/topics?limit=20")).json.some((t) => t.id === topic.id));
+  check("showHidden is for admins only (topic, comments, list)",
+    (await api(page, "GET", `/topics/${topic.id}?showHidden=true`)).status === 401 &&
+    (await api(page, "GET", `/topics/${topic.id}/comments?showHidden=true`)).status === 401 &&
+    (await api(page, "GET", "/boards/1/topics?showHidden=true")).status === 401);
+  const adminTopic = await admin.page.evaluate(async ([API, id]) => {
+    const r = await fetch(`${API}/topics/${id}?showHidden=true`, { credentials: "include" });
+    return { status: r.status, cache: r.headers.get("cache-control"), json: await r.json() };
+  }, [API, topic.id]);
+  check("Admins can open a hidden topic (not cached)", adminTopic.status === 200 && adminTopic.json.isHidden && /no-store/.test(adminTopic.cache || ""), JSON.stringify(adminTopic).slice(0, 120));
+  check("Admins can read its comments", (await api(admin.page, "GET", `/topics/${topic.id}/comments?showHidden=true`)).json?.length > 0);
+  check("Admins see it in the list", (await api(admin.page, "GET", "/boards/1/topics?showHidden=true&limit=20")).json.some((t) => t.id === topic.id && t.isHidden));
+
+  // UI: marked in the admin's list; opens; can be unhidden.
+  await admin.page.goto(BBS + "/free", { waitUntil: "networkidle" });
+  const card = admin.page.locator(`a.topic-card.is-hidden-topic[href="/free/${topic.id}"]`);
+  const deco = await card.locator(".topic-title").evaluate((e) => getComputedStyle(e).textDecorationLine).catch(() => "");
+  check("Admin list: hidden topic struck through", (await card.count()) === 1 && deco.includes("line-through"), deco);
+  await card.click();
+  await admin.page.waitForSelector(".page-topic .topic-title.is-hidden-topic");
+  await admin.page.waitForSelector(".topic-comment-card", { timeout: 5000 }).catch(() => {});
+  check("Admin: hidden topic opens, with a notice", (await admin.page.textContent(".page-topic")).includes("숨겨진 주제입니다") && (await admin.page.locator(".topic-comment-card").count()) > 0);
+  await admin.page.click(".admin-tools .dropdown-trigger button");
+  await admin.page.click(".admin-tools >> text=숨김 해제");
+  await admin.page.waitForSelector(".page-topic .topic-title:not(.is-hidden-topic)");
+  check("Admin: unhide from the topic page", (await api(page, "GET", `/topics/${topic.id}`)).status === 200);
+  await api(admin.page, "PUT", `/topics/${topic.id}/status`, { isHidden: true });
+
+  // Back from a hidden topic (non-admin) shows the previous page, not the error.
+  await page.goto(BBS + "/search", { waitUntil: "networkidle" });
+  await page.evaluate((id) => document.querySelector("#app").__vue_app__.config.globalProperties.$router.push(`/free/${id}`), topic.id);
+  await page.waitForSelector(".page-error");
+  await page.goBack();
+  await page.waitForURL(BBS + "/search");
+  await page.waitForTimeout(1500);
+  check("Back from a hidden topic: the error goes away", (await page.locator(".page-error").count()) === 0 && (await page.locator(".mb-search").count()) > 0,
+    await page.locator(".main-content").innerText().catch(() => ""));
 
   // --- menu links ---
   const badMenu = await api(admin.page, "PUT", "/admin/menus", { menus: { simple: [{ label: "x", url: "/\\evil.example" }] } });
